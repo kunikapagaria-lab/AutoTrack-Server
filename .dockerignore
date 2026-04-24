@@ -1,0 +1,28 @@
+# Node
+node_modules/
+dist/
+.npm/
+
+# Python
+backend/.backend_venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+backend/autotrack.log
+backend/users.db
+backend/uploads/
+
+# Secrets — mounted as a read-only volume at runtime, never baked into the image
+backend/.env
+
+# Dev / test artifacts
+*.ipynb
+test/
+test_*.py
+backend_err.txt
+backend_log.txt
+frontend_log.txt
+
+# Git
+.git/
+.gitignore

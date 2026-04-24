@@ -1,0 +1,28 @@
+version: '3.9'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./backend/.env:/app/backend/.env:ro  # secrets — never baked into the image
+      - uploads:/app/backend/uploads          # persistent local image fallback
+      - paddleocr_cache:/root/.paddleocr      # cache OCR models across restarts
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  uploads:
+  paddleocr_cache:
