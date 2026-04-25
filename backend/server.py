@@ -179,6 +179,143 @@ def _increment_attempts(row_ids: list):
     conn.commit()
     conn.close()
 
+def _increment_user_attempts(row_ids: list):
+    if not row_ids:
+        return
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        f"UPDATE user_sync_queue SET attempts = attempts + 1 WHERE id IN ({','.join('?'*len(row_ids))})",
+        row_ids,
+    )
+    conn.commit()
+    conn.close()
+
+def enqueue_user_sync(event_type: str, user_id: int, payload: dict):
+    config = get_branch_config()
+    if not config.get('cloud_url') or not config.get('cloud_api_key'):
+        return
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO user_sync_queue (event_type, user_id, payload, created_at) VALUES (?,?,?,?)",
+        (event_type, user_id, json.dumps(payload), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+async def _flush_user_sync_queue():
+    config    = get_branch_config()
+    cloud_url = config.get('cloud_url', '').rstrip('/')
+    api_key   = config.get('cloud_api_key', '')
+    branch_id = config.get('branch_id', '')
+    if not all([cloud_url, api_key, branch_id]):
+        return
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, event_type, user_id, payload FROM user_sync_queue WHERE attempts < 10 ORDER BY id LIMIT 50"
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    if not rows:
+        return
+    users_payload = [{'event_type': r[1], 'user_id': r[2], 'payload': json.loads(r[3])} for r in rows]
+    row_ids       = [r[0] for r in rows]
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f'{cloud_url}/sync/users',
+                json={'branch_id': branch_id, 'users': users_payload},
+                headers={'X-Branch-Key': api_key},
+            )
+        if resp.status_code == 200:
+            conn   = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"DELETE FROM user_sync_queue WHERE id IN ({','.join('?'*len(row_ids))})", row_ids
+            )
+            conn.commit()
+            conn.close()
+            log.info("Synced %d user event(s) to cloud", len(users_payload))
+        else:
+            _increment_user_attempts(row_ids)
+    except Exception as e:
+        _increment_user_attempts(row_ids)
+        log.warning("User sync failed: %s", e)
+
+async def _poll_commands():
+    config    = get_branch_config()
+    cloud_url = config.get('cloud_url', '').rstrip('/')
+    api_key   = config.get('cloud_api_key', '')
+    if not all([cloud_url, api_key]):
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f'{cloud_url}/sync/commands',
+                headers={'X-Branch-Key': api_key},
+            )
+        if resp.status_code != 200:
+            return
+        commands = resp.json().get('commands', [])
+        if not commands:
+            return
+        executed_ids = []
+        conn   = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        for cmd in commands:
+            cmd_id   = cmd['id']
+            cmd_type = cmd['command_type']
+            payload  = cmd['payload'] if isinstance(cmd['payload'], dict) else json.loads(cmd['payload'])
+            try:
+                if cmd_type == 'update_user_status':
+                    email  = payload.get('email')
+                    status = payload.get('status')
+                    if email and status in ('active', 'inactive', 'pending'):
+                        cursor.execute("UPDATE users SET status = ? WHERE email = ?", (status, email))
+                elif cmd_type == 'update_vehicle_status':
+                    vehicle_id = payload.get('vehicle_id')
+                    new_status = payload.get('status')
+                    if vehicle_id and new_status:
+                        ts = datetime.now(timezone.utc).isoformat()
+                        db = Session_()
+                        try:
+                            v = db.query(VehicleORM).filter(VehicleORM.id == vehicle_id).first()
+                            if v:
+                                v.status     = new_status
+                                v.last_update = ts
+                                v.history    = (v.history or []) + [{'status': new_status, 'timestamp': ts}]
+                                db.commit()
+                        finally:
+                            db.close()
+                elif cmd_type == 'delete_vehicle':
+                    vehicle_id = payload.get('vehicle_id')
+                    if vehicle_id:
+                        db = Session_()
+                        try:
+                            v = db.query(VehicleORM).filter(VehicleORM.id == vehicle_id).first()
+                            if v:
+                                db.delete(v)
+                                db.commit()
+                        finally:
+                            db.close()
+                executed_ids.append(cmd_id)
+            except Exception as cmd_err:
+                log.warning("Command %s execution failed: %s", cmd_id, cmd_err)
+        conn.commit()
+        conn.close()
+        if executed_ids:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f'{cloud_url}/sync/commands/done',
+                    json={'command_ids': executed_ids},
+                    headers={'X-Branch-Key': api_key},
+                )
+            log.info("Executed %d command(s) from cloud", len(executed_ids))
+    except Exception as e:
+        log.warning("Command poll failed: %s", e)
+
 async def _flush_sync_queue():
     config    = get_branch_config()
     cloud_url = config.get('cloud_url', '').rstrip('/')
@@ -225,6 +362,8 @@ async def _sync_loop():
         await asyncio.sleep(5)
         try:
             await _flush_sync_queue()
+            await _flush_user_sync_queue()
+            await _poll_commands()
         except Exception as e:
             log.error("Sync loop crashed: %s", e)
 
@@ -348,6 +487,21 @@ def init_db():
             attempts   INTEGER DEFAULT 0
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_sync_queue (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT    NOT NULL,
+            user_id    INTEGER NOT NULL,
+            payload    TEXT    NOT NULL,
+            created_at TEXT    NOT NULL,
+            attempts   INTEGER DEFAULT 0
+        )
+    ''')
+    # Migrate: add status column to users if it doesn't exist yet
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -509,6 +663,9 @@ class VehicleUpdate(BaseModel):
 
 class ImageUpload(BaseModel):
     image: str  # base64 data URL
+
+class UserStatusUpdate(BaseModel):
+    status: str  # 'active' or 'inactive'
 
 # ── YOLO models ────────────────────────────────────────────────────────────────
 VEHICLE_CLASSES = [2, 3, 5, 7]
@@ -699,26 +856,43 @@ def select_best_result(candidates):
 @app.post("/register")
 @limiter.limit("5/minute")
 def register(request: Request, user: UserRegister):
-    # Basic input validation
     if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', user.email):
         raise HTTPException(status_code=400, detail="Invalid email address")
     if len(user.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     if len(user.username.strip()) < 2:
         raise HTTPException(status_code=400, detail="Username must be at least 2 characters")
+    if user.role == 'superadmin':
+        raise HTTPException(status_code=403, detail="Cannot register as superadmin")
+    if user.role not in ('staff', 'admin'):
+        raise HTTPException(status_code=400, detail="Invalid role")
     conn   = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM users WHERE email = ?", (user.email.lower().strip(),))
     if cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail="Email already registered")
+    # Admin accounts go pending only when cloud is configured (needs a superadmin to approve)
+    config             = get_branch_config()
+    is_cloud_connected = bool(config.get('cloud_url') and config.get('cloud_api_key'))
+    status = 'pending' if user.role == 'admin' and is_cloud_connected else 'active'
     hashed = get_password_hash(user.password)
     cursor.execute(
-        "INSERT INTO users (username, email, hashed_password, role) VALUES (?, ?, ?, ?)",
-        (sanitize_text(user.username, 100), user.email.lower().strip(), hashed, user.role)
+        "INSERT INTO users (username, email, hashed_password, role, status) VALUES (?, ?, ?, ?, ?)",
+        (sanitize_text(user.username, 100), user.email.lower().strip(), hashed, user.role, status)
     )
+    user_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    enqueue_user_sync('create', user_id, {
+        'local_user_id': user_id,
+        'username':      sanitize_text(user.username, 100),
+        'email':         user.email.lower().strip(),
+        'role':          user.role,
+        'status':        status,
+    })
+    if status == 'pending':
+        return {"message": "Registration submitted. Your account is pending approval by the super admin.", "pending": True}
     return {"message": "User registered successfully"}
 
 
@@ -728,16 +902,20 @@ def login(request: Request, user_data: UserLogin):
     conn   = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT username, email, hashed_password, role FROM users WHERE email = ?",
+        "SELECT username, email, hashed_password, role, status FROM users WHERE email = ?",
         (user_data.email.lower().strip(),)
     )
     row = cursor.fetchone()
     conn.close()
     if not row:
         raise HTTPException(status_code=400, detail="Invalid email or password")
-    username, email, hashed_password, role = row
+    username, email, hashed_password, role, status = row
     if not verify_password(user_data.password, hashed_password):
         raise HTTPException(status_code=400, detail="Invalid email or password")
+    if status == 'pending':
+        raise HTTPException(status_code=403, detail="Your account is pending approval by the super admin.")
+    if status == 'inactive':
+        raise HTTPException(status_code=403, detail="Your account has been deactivated. Contact your administrator.")
     return {
         "access_token":  create_access_token(email, role),
         "refresh_token": create_refresh_token(email),
@@ -760,13 +938,16 @@ def refresh(payload: RefreshRequest):
     email = data.get("sub")
     conn   = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE email = ?", (email,))
+    cursor.execute("SELECT role, status FROM users WHERE email = ?", (email,))
     row = cursor.fetchone()
     conn.close()
     if not row:
         raise HTTPException(status_code=401, detail="User not found")
+    role, status = row
+    if status in ('pending', 'inactive'):
+        raise HTTPException(status_code=403, detail="Account access restricted")
     return {
-        "access_token": create_access_token(email, row[0]),
+        "access_token": create_access_token(email, role),
         "token_type":   "bearer",
     }
 
@@ -945,6 +1126,53 @@ def delete_vehicle(
     db.delete(row)
     db.commit()
     enqueue_sync_event('delete', vehicle_id, {'id': vehicle_id})
+    return {"ok": True}
+
+
+# ── User management (admin) ───────────────────────────────────────────────────
+
+@app.get("/admin/users")
+def list_branch_users(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, email, role, status FROM users ORDER BY role, username")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{'id': r[0], 'username': r[1], 'email': r[2], 'role': r[3], 'status': r[4]} for r in rows]
+
+
+@app.patch("/admin/users/{user_id}/status")
+def update_branch_user_status(
+    user_id: int,
+    data: UserStatusUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user.get("role") not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if data.status not in ('active', 'inactive'):
+        raise HTTPException(status_code=400, detail="Status must be 'active' or 'inactive'")
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT role, email FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="User not found")
+    target_role, target_email = row
+    # Branch admins may only manage staff — superadmin manages everyone
+    if current_user.get("role") == "admin" and target_role != "staff":
+        conn.close()
+        raise HTTPException(status_code=403, detail="Admins can only manage staff accounts")
+    cursor.execute("UPDATE users SET status = ? WHERE id = ?", (data.status, user_id))
+    conn.commit()
+    conn.close()
+    enqueue_user_sync('update', user_id, {
+        'local_user_id': user_id,
+        'email':         target_email,
+        'status':        data.status,
+    })
     return {"ok": True}
 
 

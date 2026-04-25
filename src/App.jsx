@@ -7,9 +7,10 @@ import AuthPortal from './components/AuthPortal';
 import FeedConfigModal from './components/FeedConfigModal';
 import AdminCloudView from './components/AdminCloudView';
 import BranchSettings from './components/BranchSettings';
-import { 
-  ShieldCheck, LayoutDashboard, Car, LogOut, ArrowRight, User, Lock, Search, 
-  Download, Wrench, RefreshCw, CheckCircle, Clock, Settings, Briefcase
+import UserManagementPanel from './components/UserManagementPanel';
+import {
+  ShieldCheck, LayoutDashboard, Car, LogOut, ArrowRight, User, Lock, Search,
+  Download, Wrench, RefreshCw, CheckCircle, Clock, Settings, Briefcase, Users
 } from 'lucide-react';
 import './index.css';
 
@@ -18,8 +19,9 @@ function MainApp() {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'board'
   const [searchTerm, setSearchTerm] = useState('');
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showBranchSettings, setShowBranchSettings] = useState(false);
+  const [showSettings,        setShowSettings]        = useState(false);
+  const [showBranchSettings,  setShowBranchSettings]  = useState(false);
+  const [showUserManagement,  setShowUserManagement]  = useState(false);
 
   const getInitials = (name) => {
     if (!name) return 'AW';
@@ -225,6 +227,33 @@ function MainApp() {
                       <ArrowRight size={14} /> Branch Sync
                     </button>
                   )}
+                  {user?.role === 'admin' && (
+                    <button
+                      className="menu-item"
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-secondary)',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        borderRadius: '6px',
+                        textAlign: 'left',
+                        transition: 'all 0.2s'
+                      }}
+                      onClick={() => {
+                        setShowUserManagement(true);
+                        setShowProfileMenu(false);
+                      }}
+                    >
+                      <Users size={14} /> Manage Users
+                    </button>
+                  )}
                   
                   <button 
                     className="menu-item logout"
@@ -406,6 +435,14 @@ function MainApp() {
 
       {/* Branch sync settings — admin only */}
       {showBranchSettings && <BranchSettings onClose={() => setShowBranchSettings(false)} />}
+
+      {/* User management — admin only */}
+      {showUserManagement && (
+        <UserManagementPanel
+          currentUserEmail={user?.email}
+          onClose={() => setShowUserManagement(false)}
+        />
+      )}
 
     </div>
   );

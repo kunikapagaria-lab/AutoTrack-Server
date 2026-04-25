@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { useShop } from '../context/ShopContext';
-import { 
-  ShieldCheck, User, Mail, Lock, ArrowRight, 
-  ChevronRight, Briefcase, Eye, EyeOff 
+import {
+  ShieldCheck, User, Mail, Lock, ArrowRight, Clock,
+  ChevronRight, Briefcase, Eye, EyeOff
 } from 'lucide-react';
 
 export default function AuthPortal() {
   const { login, signup } = useShop();
-  const [mode, setMode] = useState('login'); // 'login' | 'signup'
-  const [showPassword, setShowPassword] = useState(false);
+  const [mode,           setMode]           = useState('login'); // 'login' | 'signup'
+  const [showPassword,   setShowPassword]   = useState(false);
+  const [pendingMessage, setPendingMessage] = useState(null);
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -20,14 +21,45 @@ export default function AuthPortal() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (mode === 'login') {
       login(formData.email, formData.password);
     } else {
-      signup(formData);
+      const result = await signup(formData);
+      if (result?.pending) {
+        setPendingMessage(result.message);
+      }
     }
   };
+
+  // Pending approval screen
+  if (pendingMessage) {
+    return (
+      <div className="auth-container">
+        <div className="auth-card">
+          <div className="auth-header">
+            <div className="auth-logo" style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>
+              <Clock size={40} strokeWidth={2.5} />
+            </div>
+            <h1 className="auth-title">Pending Approval</h1>
+            <p className="auth-subtitle" style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              {pendingMessage}
+            </p>
+          </div>
+          <button
+            onClick={() => { setPendingMessage(null); setMode('login'); setFormData({ username: '', email: '', password: '', role: 'staff' }); }}
+            className="auth-submit-btn"
+            style={{ marginTop: '1.5rem' }}
+          >
+            Back to Sign In
+            <ArrowRight size={20} />
+          </button>
+          <div className="auth-footer">System ID: WS-M-2024 • Powered by AutoSense AI</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="auth-container">

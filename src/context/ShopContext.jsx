@@ -168,6 +168,11 @@ export function ShopProvider({ children }) {
         const data = await res.json();
         throw new Error(data.detail || 'Registration failed');
       }
+      const data = await res.json();
+      // Admin accounts go into pending state — do not auto-login
+      if (data.pending) {
+        return { pending: true, message: data.message };
+      }
       return await login(userData.email, userData.password);
     } catch (err) {
       alert(err.message);

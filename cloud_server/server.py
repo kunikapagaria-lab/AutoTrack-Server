@@ -9,16 +9,17 @@ from typing import Optional, List
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 
-_DIR    = os.path.dirname(os.path.abspath(__file__))
+_DIR     = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(_DIR, 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
-DB_PATH = os.path.join(DATA_DIR, 'cloud.db')
+DB_PATH  = os.path.join(DATA_DIR, 'cloud.db')
 
 SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'change-this-in-production')
 ALGORITHM  = 'HS256'
@@ -61,6 +62,27 @@ def init_db():
         synced_at TEXT,
         PRIMARY KEY (id, branch_id)
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS branch_users (
+        local_user_id INTEGER NOT NULL,
+        branch_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        email TEXT NOT NULL,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        synced_at TEXT NOT NULL,
+        PRIMARY KEY (local_user_id, branch_id),
+        FOREIGN KEY (branch_id) REFERENCES branches(id)
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS pending_commands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        branch_id TEXT NOT NULL,
+        command_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        executed_at TEXT
+    )''')
     conn.commit()
     conn.close()
 
@@ -81,7 +103,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=['GET', 'POST'],
+    allow_methods=['GET', 'POST', 'PATCH', 'DELETE'],
     allow_headers=['Authorization', 'Content-Type', 'X-Branch-Key'],
 )
 
@@ -150,6 +172,29 @@ class VehicleEvent(BaseModel):
 class SyncPayload(BaseModel):
     branch_id: str
     events:    List[VehicleEvent]
+
+class UserSyncEvent(BaseModel):
+    event_type: str
+    user_id:    int
+    payload:    dict
+
+class UserSyncPayload(BaseModel):
+    branch_id: str
+    users:     List[UserSyncEvent]
+
+class CommandsDonePayload(BaseModel):
+    command_ids: List[int]
+
+class UserStatusUpdateCloud(BaseModel):
+    status: str  # 'active' or 'inactive'
+
+class ApproveUserPayload(BaseModel):
+    branch_id:     str
+    local_user_id: int
+    action:        str  # 'approve' or 'reject'
+
+class VehicleStatusUpdateCloud(BaseModel):
+    status: str
 
 # ── Auth endpoints ─────────────────────────────────────────────────────────────
 
@@ -227,7 +272,23 @@ async def list_branches(_: dict = Depends(get_current_user)):
     conn.close()
     return [{'id': r[0], 'name': r[1], 'registeredAt': r[2], 'lastSeen': r[3]} for r in rows]
 
-# ── Sync endpoint (called by branch backends) ──────────────────────────────────
+@app.delete('/branches/{branch_id}')
+async def delete_branch(branch_id: str, _: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT id FROM branches WHERE id = ?', (branch_id,))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail='Branch not found')
+    c.execute('DELETE FROM vehicles WHERE branch_id = ?', (branch_id,))
+    c.execute('DELETE FROM branch_users WHERE branch_id = ?', (branch_id,))
+    c.execute('DELETE FROM pending_commands WHERE branch_id = ?', (branch_id,))
+    c.execute('DELETE FROM branches WHERE id = ?', (branch_id,))
+    conn.commit()
+    conn.close()
+    return {'ok': True}
+
+# ── Vehicle sync (called by branch backends) ───────────────────────────────────
 
 @app.post('/sync/events')
 async def sync_events(payload: SyncPayload, branch_id: str = Depends(verify_branch_key)):
@@ -268,7 +329,65 @@ async def sync_events(payload: SyncPayload, branch_id: str = Depends(verify_bran
     conn.close()
     return {'ok': True, 'synced': len(payload.events)}
 
-# ── Vehicle query (admin reads) ────────────────────────────────────────────────
+# ── User sync (called by branch backends) ──────────────────────────────────────
+
+@app.post('/sync/users')
+async def sync_users(payload: UserSyncPayload, branch_id: str = Depends(verify_branch_key)):
+    if payload.branch_id != branch_id:
+        raise HTTPException(status_code=403, detail='Branch ID mismatch')
+    conn      = sqlite3.connect(DB_PATH)
+    c         = conn.cursor()
+    synced_at = datetime.now(timezone.utc).isoformat()
+    for event in payload.users:
+        p        = event.payload
+        local_id = p.get('local_user_id', event.user_id)
+        c.execute('''
+            INSERT INTO branch_users (local_user_id, branch_id, username, email, role, status, synced_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(local_user_id, branch_id) DO UPDATE SET
+                username=excluded.username, email=excluded.email,
+                role=excluded.role, status=excluded.status, synced_at=excluded.synced_at
+        ''', (
+            local_id, branch_id,
+            p.get('username', ''), p.get('email', ''),
+            p.get('role', 'staff'), p.get('status', 'active'), synced_at
+        ))
+    conn.commit()
+    conn.close()
+    return {'ok': True, 'synced': len(payload.users)}
+
+# ── Command queue (branch polls these, then confirms) ─────────────────────────
+
+@app.get('/sync/commands')
+async def get_commands(branch_id: str = Depends(verify_branch_key)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('''
+        SELECT id, command_type, payload FROM pending_commands
+        WHERE branch_id = ? AND status = 'pending' AND attempts < 10
+        ORDER BY id LIMIT 50
+    ''', (branch_id,))
+    rows = c.fetchall()
+    conn.close()
+    return {'commands': [{'id': r[0], 'command_type': r[1], 'payload': json.loads(r[2])} for r in rows]}
+
+@app.post('/sync/commands/done')
+async def mark_commands_done(payload: CommandsDonePayload, branch_id: str = Depends(verify_branch_key)):
+    if not payload.command_ids:
+        return {'ok': True}
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    placeholders = ','.join('?' * len(payload.command_ids))
+    now = datetime.now(timezone.utc).isoformat()
+    c.execute(
+        f"UPDATE pending_commands SET status='executed', executed_at=? WHERE id IN ({placeholders}) AND branch_id=?",
+        [now] + list(payload.command_ids) + [branch_id]
+    )
+    conn.commit()
+    conn.close()
+    return {'ok': True}
+
+# ── Vehicle query and management (superadmin) ──────────────────────────────────
 
 @app.get('/vehicles')
 async def get_vehicles(branch_id: str, _: dict = Depends(get_current_user)):
@@ -291,6 +410,178 @@ async def get_vehicles(branch_id: str, _: dict = Depends(get_current_user)):
         v['history'] = json.loads(v['history']) if v['history'] else []
         result.append(v)
     return result
+
+@app.patch('/vehicles/{vehicle_id}')
+async def update_cloud_vehicle(
+    vehicle_id: str,
+    data: VehicleStatusUpdateCloud,
+    branch_id: str = Query(...),
+    _: dict = Depends(get_current_user),
+):
+    valid_statuses = ('WAITING', 'ENTERED', 'TEMP_OUT', 'EXITED')
+    if data.status not in valid_statuses:
+        raise HTTPException(status_code=400, detail='Invalid status')
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT id FROM vehicles WHERE id = ? AND branch_id = ?', (vehicle_id, branch_id))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail='Vehicle not found')
+    ts = datetime.now(timezone.utc).isoformat()
+    c.execute('UPDATE vehicles SET status = ?, last_update = ? WHERE id = ? AND branch_id = ?',
+              (data.status, ts, vehicle_id, branch_id))
+    c.execute(
+        'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+        (branch_id, 'update_vehicle_status', json.dumps({'vehicle_id': vehicle_id, 'status': data.status}), ts)
+    )
+    conn.commit()
+    conn.close()
+    return {'ok': True}
+
+@app.delete('/vehicles/{vehicle_id}')
+async def delete_cloud_vehicle(
+    vehicle_id: str,
+    branch_id: str = Query(...),
+    _: dict = Depends(get_current_user),
+):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT id FROM vehicles WHERE id = ? AND branch_id = ?', (vehicle_id, branch_id))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail='Vehicle not found')
+    c.execute('DELETE FROM vehicles WHERE id = ? AND branch_id = ?', (vehicle_id, branch_id))
+    ts = datetime.now(timezone.utc).isoformat()
+    c.execute(
+        'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+        (branch_id, 'delete_vehicle', json.dumps({'vehicle_id': vehicle_id}), ts)
+    )
+    conn.commit()
+    conn.close()
+    return {'ok': True}
+
+@app.get('/vehicles/export')
+async def export_all_vehicles(_: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('''
+        SELECT b.name, v.id, v.license_plate, v.status, v.timestamp,
+               v.last_update, v.direction, v.history
+        FROM vehicles v
+        JOIN branches b ON v.branch_id = b.id
+        ORDER BY v.timestamp DESC
+    ''')
+    rows = c.fetchall()
+    conn.close()
+    lines = ['Branch,Vehicle ID,License Plate,Status,Entry Time,Last Update,Direction,Activity Flow']
+    for r in rows:
+        branch_name, vid, plate, status, ts, lu, direction, history_json = r
+        try:
+            history = json.loads(history_json) if history_json else []
+            flow    = ' >> '.join(f"{h['status']} ({h.get('timestamp','')[:16]})" for h in history)
+        except Exception:
+            flow = ''
+        lines.append(f'"{branch_name}","{vid}","{plate or "PENDING"}","{status or ""}","{ts or ""}","{lu or ""}","{direction or ""}","{flow}"')
+    csv_content = '\n'.join(lines)
+    return Response(
+        content=csv_content,
+        media_type='text/csv',
+        headers={'Content-Disposition': 'attachment; filename="consolidated_report.csv"'},
+    )
+
+# ── User management (superadmin) ───────────────────────────────────────────────
+
+@app.get('/users')
+async def list_all_users(_: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('''
+        SELECT bu.local_user_id, bu.branch_id, b.name,
+               bu.username, bu.email, bu.role, bu.status, bu.synced_at
+        FROM branch_users bu
+        JOIN branches b ON bu.branch_id = b.id
+        ORDER BY bu.role, bu.username
+    ''')
+    rows = c.fetchall()
+    conn.close()
+    return [{
+        'localUserId': r[0], 'branchId': r[1], 'branchName': r[2],
+        'username': r[3], 'email': r[4], 'role': r[5], 'status': r[6], 'syncedAt': r[7],
+    } for r in rows]
+
+@app.get('/branches/{branch_id}/users')
+async def list_branch_users(branch_id: str, _: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('''
+        SELECT local_user_id, username, email, role, status, synced_at
+        FROM branch_users WHERE branch_id = ? ORDER BY role, username
+    ''', (branch_id,))
+    rows = c.fetchall()
+    conn.close()
+    return [{'localUserId': r[0], 'username': r[1], 'email': r[2], 'role': r[3], 'status': r[4], 'syncedAt': r[5]} for r in rows]
+
+@app.patch('/branches/{branch_id}/users/{user_id}/status')
+async def update_branch_user_status(
+    branch_id: str,
+    user_id:   int,
+    data:      UserStatusUpdateCloud,
+    _:         dict = Depends(get_current_user),
+):
+    if data.status not in ('active', 'inactive'):
+        raise HTTPException(status_code=400, detail='Status must be active or inactive')
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT email FROM branch_users WHERE branch_id = ? AND local_user_id = ?', (branch_id, user_id))
+    row  = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail='User not found')
+    email = row[0]
+    c.execute('UPDATE branch_users SET status = ? WHERE branch_id = ? AND local_user_id = ?',
+              (data.status, branch_id, user_id))
+    c.execute(
+        'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+        (branch_id, 'update_user_status', json.dumps({'email': email, 'status': data.status}),
+         datetime.now(timezone.utc).isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return {'ok': True}
+
+@app.post('/users/approve')
+async def approve_user(data: ApproveUserPayload, _: dict = Depends(get_current_user)):
+    if data.action not in ('approve', 'reject'):
+        raise HTTPException(status_code=400, detail='Action must be approve or reject')
+    new_status = 'active' if data.action == 'approve' else 'inactive'
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT email FROM branch_users WHERE branch_id = ? AND local_user_id = ?',
+              (data.branch_id, data.local_user_id))
+    row  = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail='User not found')
+    email = row[0]
+    c.execute('UPDATE branch_users SET status = ? WHERE branch_id = ? AND local_user_id = ?',
+              (new_status, data.branch_id, data.local_user_id))
+    c.execute(
+        'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+        (data.branch_id, 'update_user_status', json.dumps({'email': email, 'status': new_status}),
+         datetime.now(timezone.utc).isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return {'ok': True}
+
+@app.get('/pending-approvals/count')
+async def pending_approvals_count(_: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM branch_users WHERE status = 'pending'")
+    count = c.fetchone()[0]
+    conn.close()
+    return {'count': count}
 
 if __name__ == '__main__':
     import uvicorn
