@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -29,10 +32,12 @@ jobs:
           file: backend/Dockerfile
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:latest
+          build-args: |
+            PLATE_MODEL_URL=${{ secrets.PLATE_MODEL_URL }}
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache
           cache-to:   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache,mode=max
 
-      # ── Branch + Cloud frontend (React + Nginx) ───────────────────────────────
+      # ── Frontend (React + Nginx) ──────────────────────────────────────────────
       - name: Build & push frontend
         uses: docker/build-push-action@v5
         with:
