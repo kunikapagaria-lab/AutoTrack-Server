@@ -263,6 +263,18 @@ async def register_branch(data: BranchRegister, _: dict = Depends(get_current_us
     conn.close()
     return {'branch_id': branch_id, 'name': data.name.strip(), 'api_key': api_key}
 
+@app.get('/branches/me')
+async def get_my_branch(branch_id: str = Depends(verify_branch_key)):
+    """Branch backend calls this with its API key to discover the cloud-assigned branch_id."""
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT id, name FROM branches WHERE id = ?', (branch_id,))
+    row  = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail='Branch not found')
+    return {'branch_id': row[0], 'name': row[1]}
+
 @app.get('/branches')
 async def list_branches(_: dict = Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)

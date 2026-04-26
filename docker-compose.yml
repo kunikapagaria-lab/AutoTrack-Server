@@ -2,26 +2,33 @@ version: '3.9'
 
 services:
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    image: ${DOCKERHUB_USERNAME}/autotrack-backend:latest
     restart: unless-stopped
     volumes:
-      - ./backend/.env:/app/backend/.env:ro  # secrets — never baked into the image
-      - uploads:/app/backend/uploads          # persistent local image fallback
-      - paddleocr_cache:/root/.paddleocr      # cache OCR models across restarts
+      - ./backend/.env:/app/backend/.env:ro   # secrets — never baked into image
+      - ./backend/data:/app/backend/data       # SQLite database — persists across updates
+      - uploads:/app/backend/uploads           # local image fallback
+      - paddleocr_cache:/root/.paddleocr       # OCR models cache
     environment:
       - PYTHONUNBUFFERED=1
 
   frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
+    image: ${DOCKERHUB_USERNAME}/autotrack-frontend:latest
     restart: unless-stopped
     ports:
       - "80:80"
     depends_on:
       - backend
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=300   # check Docker Hub every 5 minutes
+      - WATCHTOWER_CLEANUP=true        # remove old images after update
+      - WATCHTOWER_INCLUDE_RESTARTING=true
 
 volumes:
   uploads:

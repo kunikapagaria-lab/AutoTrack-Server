@@ -1,0 +1,55 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── Branch backend (FastAPI + YOLO + PaddleOCR) ──────────────────────────
+      - name: Build & push branch backend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache
+          cache-to:   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache,mode=max
+
+      # ── Branch + Cloud frontend (React + Nginx) ───────────────────────────────
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.frontend
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:buildcache
+          cache-to:   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:buildcache,mode=max
+
+      # ── Cloud backend (lightweight FastAPI only) ──────────────────────────────
+      - name: Build & push cloud backend
+        uses: docker/build-push-action@v5
+        with:
+          context: cloud_server
+          file: cloud_server/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:buildcache
+          cache-to:   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:buildcache,mode=max

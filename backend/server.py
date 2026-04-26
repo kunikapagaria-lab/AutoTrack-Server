@@ -51,7 +51,10 @@ except ImportError:
 # ── Paths ──────────────────────────────────────────────────────────────────────
 _DIR             = os.path.dirname(os.path.abspath(__file__))
 PLATE_MODEL_PATH = os.path.join(_DIR, '..', 'licence_plate.pt')
-DB_PATH          = os.path.join(_DIR, 'users.db')
+# Database lives in data/ so the docker-compose volume mount persists it across updates
+_DATA_DIR        = os.path.join(_DIR, 'data')
+os.makedirs(_DATA_DIR, exist_ok=True)
+DB_PATH          = os.path.join(_DATA_DIR, 'users.db')
 UPLOADS_DIR      = os.path.join(_DIR, 'uploads')
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
@@ -980,24 +983,47 @@ async def save_branch_config_endpoint(
 ):
     if current_user.get("role") not in ("admin", "superadmin"):
         raise HTTPException(status_code=403, detail="Admin access required")
+    cloud_url = data.cloud_url.rstrip('/')
+    api_key   = data.cloud_api_key.strip()
     conn   = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT value FROM app_config WHERE key = 'branch_id'")
-    if not cursor.fetchone():
-        cursor.execute(
-            "INSERT INTO app_config (key, value) VALUES ('branch_id', ?)", (str(uuid.uuid4()),)
-        )
     for key, value in [
         ('branch_name',   data.branch_name.strip()),
-        ('cloud_url',     data.cloud_url.rstrip('/')),
-        ('cloud_api_key', data.cloud_api_key.strip()),
+        ('cloud_url',     cloud_url),
+        ('cloud_api_key', api_key),
     ]:
         cursor.execute(
             "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)", (key, value)
         )
     conn.commit()
     conn.close()
-    return {"ok": True}
+    # Auto-discover the branch_id assigned by the cloud using the API key.
+    # This is critical — the cloud rejects syncs where the local branch_id
+    # doesn't match what was assigned at branch registration time.
+    cloud_branch_id = None
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f'{cloud_url}/branches/me',
+                headers={'X-Branch-Key': api_key},
+            )
+        if resp.status_code == 200:
+            cloud_branch_id = resp.json().get('branch_id')
+            if cloud_branch_id:
+                conn   = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO app_config (key, value) VALUES ('branch_id', ?)",
+                    (cloud_branch_id,)
+                )
+                conn.commit()
+                conn.close()
+                log.info("Branch ID auto-discovered from cloud: %s", cloud_branch_id)
+        else:
+            log.warning("Cloud returned HTTP %d for /branches/me", resp.status_code)
+    except Exception as e:
+        log.warning("Could not reach cloud to discover branch_id: %s", e)
+    return {"ok": True, "branch_id": cloud_branch_id, "connected": cloud_branch_id is not None}
 
 @app.post("/config/rtsp")
 def save_rtsp_config(

@@ -2,25 +2,31 @@ version: '3.9'
 
 services:
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${DOCKERHUB_USERNAME}/autotrack-cloud:latest
     restart: unless-stopped
     volumes:
-      - ./.env:/app/.env:ro   # secrets — never baked into the image
-      - cloud_db:/app/data    # persistent DB
+      - ./data:/app/data          # persistent cloud SQLite database
+      - ./.env:/app/.env:ro       # secrets
     environment:
       - PYTHONUNBUFFERED=1
 
   frontend:
-    build:
-      context: ..             # project root — needs Dockerfile.frontend and nginx/nginx.conf
-      dockerfile: Dockerfile.frontend
+    image: ${DOCKERHUB_USERNAME}/autotrack-frontend:latest
     restart: unless-stopped
     ports:
       - "80:80"
     depends_on:
       - backend
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=300   # check Docker Hub every 5 minutes
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_INCLUDE_RESTARTING=true
 
 volumes:
   cloud_db:
