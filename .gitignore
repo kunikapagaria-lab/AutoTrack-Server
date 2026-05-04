@@ -39,3 +39,14 @@ backend/.backend_venv/
 .env
 .env.local
 .env.*.local
+
+# Installer build output
+installer/output/
+installer/AutoTrack.exe
+launcher/dist/
+launcher/build/
+
+# Dev log artifacts
+backend_log.txt
+frontend_log.txt
+backend_err.txt

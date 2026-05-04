@@ -370,8 +370,42 @@ async def _sync_loop():
         except Exception as e:
             log.error("Sync loop crashed: %s", e)
 
+async def _auto_discover_branch_id():
+    """
+    If cloud is configured but branch_id is missing (fresh install),
+    call /branches/me to get the correct branch_id from the cloud.
+    This runs once on startup.
+    """
+    config    = get_branch_config()
+    cloud_url = config.get('cloud_url', '').rstrip('/')
+    api_key   = config.get('cloud_api_key', '')
+    branch_id = config.get('branch_id', '')
+    if not cloud_url or not api_key or branch_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f'{cloud_url}/branches/me',
+                headers={'X-Branch-Key': api_key},
+            )
+        if resp.status_code == 200:
+            cloud_branch_id = resp.json().get('branch_id')
+            if cloud_branch_id:
+                conn   = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO app_config (key, value) VALUES ('branch_id', ?)",
+                    (cloud_branch_id,)
+                )
+                conn.commit()
+                conn.close()
+                log.info("Branch ID auto-discovered on startup: %s", cloud_branch_id)
+    except Exception as e:
+        log.warning("Startup branch_id discovery failed: %s", e)
+
 @asynccontextmanager
 async def lifespan(_):
+    await _auto_discover_branch_id()
     task = asyncio.create_task(_sync_loop())
     yield
     task.cancel()
@@ -509,6 +543,38 @@ def init_db():
     conn.close()
 
 init_db()
+
+def _load_initial_config():
+    """
+    On first startup after a fresh install, the Inno Setup installer writes
+    backend/data/initial_config.json with cloud URL, API key, and branch name.
+    We read it here, populate app_config, auto-discover the branch_id from the
+    cloud, then delete the file so it only runs once.
+    """
+    config_file = os.path.join(_DATA_DIR, 'initial_config.json')
+    if not os.path.exists(config_file):
+        return
+    try:
+        with open(config_file, 'r') as f:
+            initial = json.load(f)
+        conn   = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM app_config")
+        if cursor.fetchone()[0] == 0:
+            for key, value in initial.items():
+                if value:
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+                        (key, value)
+                    )
+            conn.commit()
+            log.info("Installer config loaded: branch_name=%s", initial.get('branch_name', ''))
+        conn.close()
+        os.remove(config_file)
+    except Exception as e:
+        log.warning("Failed to load initial config: %s", e)
+
+_load_initial_config()
 
 # ── RTSP helpers ───────────────────────────────────────────────────────────────
 def get_rtsp_url() -> str:
