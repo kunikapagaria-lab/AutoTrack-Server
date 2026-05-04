@@ -2,7 +2,7 @@ version: '3.9'
 
 services:
   backend:
-    image: YOUR_DOCKERHUB_USERNAME/autotrack-backend:latest
+    image: kunikap/autotrack-backend:latest
     restart: unless-stopped
     volumes:
       - ./backend/.env:/app/backend/.env:ro
@@ -13,7 +13,7 @@ services:
       - PYTHONUNBUFFERED=1
 
   frontend:
-    image: YOUR_DOCKERHUB_USERNAME/autotrack-frontend:latest
+    image: kunikap/autotrack-frontend:latest
     restart: unless-stopped
     ports:
       - "80:80"
@@ -21,7 +21,7 @@ services:
       - backend
 
   watchtower:
-    image: containrrr/watchtower
+    image: containrrr/watchtower:1.7.1
     restart: unless-stopped
     volumes:
       - //var/run/docker.sock:/var/run/docker.sock
