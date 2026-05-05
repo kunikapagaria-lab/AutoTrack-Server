@@ -17,7 +17,8 @@ COPY backend/ .
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" 2>/dev/null || true
 
 # licence_plate.pt — custom model hosted on GitHub Releases
-# Pass --build-arg PLATE_MODEL_URL=<url> or set via GitHub Actions secret
+# CACHEBUST forces Docker to re-download the model on every build
+ARG CACHEBUST=1
 ARG PLATE_MODEL_URL
 RUN if [ -n "$PLATE_MODEL_URL" ]; then \
         curl -L -o /app/licence_plate.pt "$PLATE_MODEL_URL" && \

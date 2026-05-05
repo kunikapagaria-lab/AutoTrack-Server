@@ -34,6 +34,7 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:latest
           build-args: |
             PLATE_MODEL_URL=${{ secrets.PLATE_MODEL_URL }}
+            CACHEBUST=${{ github.run_id }}
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache
           cache-to:   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache,mode=max
 
