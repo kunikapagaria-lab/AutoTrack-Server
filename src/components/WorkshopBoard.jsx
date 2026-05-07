@@ -14,9 +14,11 @@ const toAbsUrl = (url) => {
 export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehicles: externalVehicles = null }) {
   const { user, vehicles: contextVehicles, backendError, retryLoadVehicles, updateVehicleStatus, updateVehicle, removeVehicle } = useShop();
   const vehicles = externalVehicles !== null ? externalVehicles : contextVehicles;
-  const [selectedVehicle,    setSelectedVehicle]    = useState(null);
+  const [selectedVehicleId,  setSelectedVehicleId]  = useState(null);
+  const selectedVehicle = selectedVehicleId ? (vehicles.find(v => v.id === selectedVehicleId) ?? null) : null;
   const [resolvingVehicle,   setResolvingVehicle]   = useState(null);
   const [resolveManualPlate, setResolveManualPlate] = useState('');
+  const [lightboxUrl,        setLightboxUrl]        = useState(null);
 
   const filteredVehicles = vehicles.filter(v =>
     v.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -42,6 +44,9 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
     const plateUpper = plate.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15);
     if (!plateUpper) return;
 
+    // vehicle.imageUrl is the frame captured at detection time — carry it into the status event
+    const detectionPhoto = vehicle.imageUrl || null;
+
     if (vehicle.pendingDirection === 'INGRESS') {
       const existing = vehicles.find(v =>
         v.id !== vehicle.id &&
@@ -51,12 +56,12 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
       );
       if (existing) {
         // Re-entry of known vehicle
-        updateVehicleStatus(existing.id, 'ENTERED');
+        updateVehicleStatus(existing.id, 'ENTERED', detectionPhoto);
         removeVehicle(vehicle.id);
       } else {
         // New vehicle entering manually — clear pending flag before promoting
         updateVehicle(vehicle.id, { licensePlate: plateUpper, pendingDirection: null, plateStatus: 'resolved' });
-        updateVehicleStatus(vehicle.id, 'ENTERED');
+        updateVehicleStatus(vehicle.id, 'ENTERED', detectionPhoto);
       }
     } else {
       // EGRESS
@@ -66,7 +71,7 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
         v.status === 'ENTERED'
       );
       if (entered) {
-        updateVehicleStatus(entered.id, 'TEMP_OUT');
+        updateVehicleStatus(entered.id, 'TEMP_OUT', detectionPhoto);
         removeVehicle(vehicle.id);
       } else {
         // No ENTERED match — clear pending state, keep in WAITING for manual action
@@ -139,12 +144,12 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
                     {/* ── card body (clickable) ── */}
                     <div
                       onClick={() => {
-                        if (readOnly) { setSelectedVehicle(vehicle); return; }
+                        if (readOnly) { setSelectedVehicleId(vehicle.id); return; }
                         if (needsResolve) {
                           setResolvingVehicle(vehicle);
                           setResolveManualPlate(vehicle.licensePlate || '');
                         } else if (!scanning) {
-                          setSelectedVehicle(vehicle);
+                          setSelectedVehicleId(vehicle.id);
                         }
                       }}
                       style={{ cursor: scanning && !readOnly ? 'default' : 'pointer' }}
@@ -261,13 +266,31 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
                           </button>
                         )}
                         {col.id !== 'ENTERED' && (
-                          <button onClick={() => updateVehicleStatus(vehicle.id, 'ENTERED')}
+                          <button onClick={() => {
+                            // Look for a pending INGRESS placeholder for this plate — use its detection photo
+                            const placeholder = vehicles.find(v =>
+                              v.id !== vehicle.id &&
+                              v.pendingDirection === 'INGRESS' &&
+                              v.licensePlate?.toUpperCase() === vehicle.licensePlate?.toUpperCase() &&
+                              v.imageUrl
+                            );
+                            updateVehicleStatus(vehicle.id, 'ENTERED', placeholder?.imageUrl || null);
+                          }}
                             className="btn primary" style={{ fontSize: '0.65rem', padding: '6px', flex: 1 }}>
                             Workshop
                           </button>
                         )}
                         {col.id !== 'TEMP_OUT' && (
-                          <button onClick={() => updateVehicleStatus(vehicle.id, 'TEMP_OUT')}
+                          <button onClick={() => {
+                            // Look for a pending EGRESS placeholder for this plate — use its detection photo
+                            const placeholder = vehicles.find(v =>
+                              v.id !== vehicle.id &&
+                              v.pendingDirection === 'EGRESS' &&
+                              v.licensePlate?.toUpperCase() === vehicle.licensePlate?.toUpperCase() &&
+                              v.imageUrl
+                            );
+                            updateVehicleStatus(vehicle.id, 'TEMP_OUT', placeholder?.imageUrl || null);
+                          }}
                             className="btn" style={{ fontSize: '0.65rem', padding: '6px', flex: 1 }}>
                             Out
                           </button>
@@ -311,7 +334,7 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
       {/* ── Vehicle Detail Modal ── */}
       {selectedVehicle && (
         <div
-          onClick={() => setSelectedVehicle(null)}
+          onClick={() => { setSelectedVehicleId(null); setLightboxUrl(null); }}
           style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)',
@@ -334,21 +357,105 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
                   Registry Log: {selectedVehicle.id}
                 </div>
               </div>
-              <button onClick={() => setSelectedVehicle(null)} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: 'white', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}>
+              <button onClick={() => { setSelectedVehicleId(null); setLightboxUrl(null); }} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: 'white', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}>
                 <X size={20} />
               </button>
             </div>
 
             <div style={{ padding: '1.5rem', maxHeight: '75vh', overflowY: 'auto' }}>
-              {selectedVehicle.imageUrl ? (
-                <div style={{ width: '100%', aspectRatio: '16/9', borderRadius: '12px', overflow: 'hidden', marginBottom: '1.5rem', border: '1.5px solid var(--border-color)' }}>
-                  <img src={toAbsUrl(selectedVehicle.imageUrl)} alt="Captured Car" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </div>
-              ) : (
-                <div style={{ width: '100%', height: '200px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem' }}>
-                  <Car size={32} color="var(--text-secondary)" />
-                </div>
-              )}
+              {/* ── Photo collage ── */}
+              {(() => {
+                const PHOTO_STATUSES = new Set(['ENTERED', 'TEMP_OUT', 'EXITED']);
+                const statusLabel = s =>
+                  s === 'ENTERED'  ? 'Entry' :
+                  s === 'TEMP_OUT' ? 'Temp Out' :
+                  s === 'EXITED'   ? 'Exit' : s;
+                const statusColor = s =>
+                  s === 'ENTERED'  ? 'var(--green-accent)'  :
+                  s === 'TEMP_OUT' ? 'var(--orange-accent)' :
+                  s === 'EXITED'   ? 'var(--blue-accent)'   : 'var(--text-secondary)';
+
+                // Build photo list: use per-event imageUrl when present.
+                // For the first ENTERED event with no dedicated photo, fall back to
+                // vehicle.imageUrl so old vehicles and manual-move vehicles always
+                // show their detection photo in the collage.
+                const photoEvents = [];
+                let usedVehicleImg = false;
+                for (const event of (selectedVehicle.history || [])) {
+                  if (!PHOTO_STATUSES.has(event.status)) continue;
+                  if (event.imageUrl) {
+                    photoEvents.push(event);
+                    if (event.status === 'ENTERED') usedVehicleImg = true;
+                  } else if (
+                    event.status === 'ENTERED' &&
+                    !usedVehicleImg &&
+                    selectedVehicle.imageUrl
+                  ) {
+                    photoEvents.push({ ...event, imageUrl: selectedVehicle.imageUrl });
+                    usedVehicleImg = true;
+                  }
+                }
+
+                // Fallback: no history events at all but vehicle has an imageUrl
+                if (photoEvents.length === 0 && selectedVehicle.imageUrl) {
+                  photoEvents.push({
+                    status: 'ENTERED',
+                    timestamp: selectedVehicle.timestamp,
+                    imageUrl: selectedVehicle.imageUrl,
+                  });
+                }
+
+                if (photoEvents.length === 0) {
+                  return (
+                    <div style={{ width: '100%', height: '200px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem' }}>
+                      <Car size={32} color="var(--text-secondary)" />
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: photoEvents.length === 1 ? '1fr' : 'repeat(auto-fill, minmax(150px, 1fr))',
+                    gap: '8px',
+                    marginBottom: '1.5rem',
+                  }}>
+                    {photoEvents.map((event, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => setLightboxUrl(toAbsUrl(event.imageUrl))}
+                        style={{
+                          position: 'relative', borderRadius: '10px', overflow: 'hidden',
+                          aspectRatio: '16/9', cursor: 'pointer',
+                          border: '1.5px solid var(--border-color)',
+                          transition: 'transform 0.15s, border-color 0.15s',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.02)'; e.currentTarget.style.borderColor = statusColor(event.status); }}
+                        onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+                      >
+                        <img
+                          src={toAbsUrl(event.imageUrl)}
+                          alt={statusLabel(event.status)}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        />
+                        <div style={{
+                          position: 'absolute', bottom: 0, left: 0, right: 0,
+                          padding: '16px 8px 6px',
+                          background: 'linear-gradient(transparent, rgba(0,0,0,0.75))',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end',
+                        }}>
+                          <span style={{ fontSize: '0.62rem', fontWeight: 800, color: statusColor(event.status), textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            {statusLabel(event.status)}
+                          </span>
+                          <span style={{ fontSize: '0.58rem', color: 'rgba(255,255,255,0.6)' }}>
+                            {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -404,7 +511,6 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
                       onChange={readOnly ? undefined : e => {
                         const newPlate = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15);
                         updateVehicle(selectedVehicle.id, { licensePlate: newPlate });
-                        setSelectedVehicle(prev => ({ ...prev, licensePlate: newPlate }));
                       }}
                       placeholder="ENTER PLATE"
                       style={{
@@ -423,11 +529,44 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
             </div>
 
             <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end' }}>
-              <button onClick={() => setSelectedVehicle(null)} className="btn primary" style={{ padding: '10px 24px' }}>
+              <button onClick={() => { setSelectedVehicleId(null); setLightboxUrl(null); }} className="btn primary" style={{ padding: '10px 24px' }}>
                 Done
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Photo Lightbox ── */}
+      {lightboxUrl && (
+        <div
+          onClick={() => setLightboxUrl(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1100,
+            background: 'rgba(0,0,0,0.94)', backdropFilter: 'blur(12px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
+          }}
+        >
+          <button
+            onClick={() => setLightboxUrl(null)}
+            style={{
+              position: 'absolute', top: 20, right: 20,
+              background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+              color: 'white', padding: '8px', borderRadius: '50%', cursor: 'pointer', zIndex: 1,
+            }}
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="Vehicle"
+            onClick={e => e.stopPropagation()}
+            style={{
+              maxWidth: '100%', maxHeight: '90vh',
+              borderRadius: '12px', objectFit: 'contain',
+              boxShadow: '0 25px 60px rgba(0,0,0,0.8)',
+            }}
+          />
         </div>
       )}
 

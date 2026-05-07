@@ -361,6 +361,7 @@ export default function Detector() {
 
             // Upload vehicle frame to server (async), get a stable URL
             const imageUrl = await uploadFrame(rawFrame);
+            console.log('[DETECT]', direction, 'imageUrl:', imageUrl ? imageUrl.slice(0, 60) : 'EMPTY', 'rawFrame:', rawFrame ? rawFrame.slice(0, 30) : 'EMPTY');
 
             // Add to WAITING column with scanning state
             addVehicle({
@@ -407,7 +408,7 @@ export default function Detector() {
                   );
                   if (existing) {
                     // Re-entry: restore existing vehicle, discard placeholder
-                    updateVehicleStatus(existing.id, 'ENTERED');
+                    updateVehicleStatus(existing.id, 'ENTERED', imageUrl);
                     removeVehicle(pendingId);
                   } else {
                     // New vehicle: promote placeholder from WAITING → ENTERED
@@ -418,7 +419,7 @@ export default function Detector() {
                       pendingDirection: null,
                       detectionLog:    pr.detection_log || [],
                     });
-                    updateVehicleStatus(pendingId, 'ENTERED');
+                    updateVehicleStatus(pendingId, 'ENTERED', imageUrl);
                   }
                 } else {
                   // EGRESS: find the matching ENTERED vehicle
@@ -429,7 +430,8 @@ export default function Detector() {
                   );
                   if (entered) {
                     // Known exit: mark TEMP_OUT, discard placeholder
-                    updateVehicleStatus(entered.id, 'TEMP_OUT');
+                    console.log('[DETECT] EGRESS → TEMP_OUT for', entered.id, 'imageUrl:', imageUrl ? imageUrl.slice(0, 60) : 'EMPTY');
+                    updateVehicleStatus(entered.id, 'TEMP_OUT', imageUrl);
                     removeVehicle(pendingId);
                   } else {
                     // Plate found but no matching ENTERED vehicle — leave in WAITING for manual resolve

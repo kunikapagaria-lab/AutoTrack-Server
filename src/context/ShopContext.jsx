@@ -239,15 +239,19 @@ export function ShopProvider({ children }) {
     }).catch(err => console.error('Failed to save vehicle:', err));
   };
 
-  const updateVehicleStatus = (id, newStatus) => {
-    const timestamp  = new Date().toISOString();
+  const updateVehicleStatus = (id, newStatus, imageUrl = null) => {
+    const timestamp    = new Date().toISOString();
+    const historyEntry = imageUrl
+      ? { status: newStatus, timestamp, imageUrl }
+      : { status: newStatus, timestamp };
+    console.log('[STATUS]', id, '→', newStatus, '| imageUrl:', imageUrl ? imageUrl.slice(0, 60) : 'NONE', '| entry keys:', Object.keys(historyEntry));
     setVehicles(prev => prev.map(v =>
       v.id === id
-        ? { ...v, status: newStatus, history: [...(v.history || []), { status: newStatus, timestamp }], lastUpdate: timestamp }
+        ? { ...v, status: newStatus, history: [...(v.history || []), historyEntry], lastUpdate: timestamp }
         : v
     ));
     const vehicle    = vehicles.find(v => v.id === id);
-    const newHistory = [...(vehicle?.history || []), { status: newStatus, timestamp }];
+    const newHistory = [...(vehicle?.history || []), historyEntry];
     apiFetch(`${API_URL}/vehicles/${id}`, {
       method: 'PATCH',
       body:   JSON.stringify({ status: newStatus, history: newHistory, last_update: timestamp }),

@@ -51,6 +51,7 @@ export function useFusionQueue() {
       triggeredAt: now,
       direction,
       vehicleId,
+      imageUrl: imageUrl || null,
       resolved: false,
     });
   }, [addVehicle]);
@@ -70,7 +71,7 @@ export function useFusionQueue() {
     if (!best) return;
 
     best.resolved = true;
-    const { vehicleId, direction } = best;
+    const { vehicleId, direction, imageUrl: triggerImageUrl } = best;
 
     // No plate found — leave in WAITING for manual entry
     if (!plateText) {
@@ -97,7 +98,7 @@ export function useFusionQueue() {
         (v.status === 'TEMP_OUT' || v.status === 'WAITING')
       );
       if (existing) {
-        updateVehicleStatus(existing.id, 'ENTERED');
+        updateVehicleStatus(existing.id, 'ENTERED', triggerImageUrl);
         removeVehicle(vehicleId);
       } else {
         updateVehicle(vehicleId, {
@@ -108,7 +109,7 @@ export function useFusionQueue() {
           confidence,
           detectionLog:     detectionLog || [],
         });
-        updateVehicleStatus(vehicleId, 'ENTERED');
+        updateVehicleStatus(vehicleId, 'ENTERED', triggerImageUrl);
       }
     } else {
       const entered = vehiclesRef.current.find(v =>
@@ -117,7 +118,7 @@ export function useFusionQueue() {
         v.status === 'ENTERED'
       );
       if (entered) {
-        updateVehicleStatus(entered.id, 'TEMP_OUT');
+        updateVehicleStatus(entered.id, 'TEMP_OUT', triggerImageUrl);
         removeVehicle(vehicleId);
       } else {
         updateVehicle(vehicleId, {
