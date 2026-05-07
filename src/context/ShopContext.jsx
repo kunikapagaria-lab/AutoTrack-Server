@@ -55,6 +55,32 @@ export function ShopProvider({ children }) {
     }
   };
 
+  // feedSource2 — source preference for the low/plate camera
+  const [feedSource2, setFeedSource2_] = useState(
+    () => localStorage.getItem('autotrack_feedSource2') || 'rtsp'
+  );
+
+  const setFeedConfig2 = (source) => {
+    localStorage.setItem('autotrack_feedSource2', source);
+    setFeedSource2_(source);
+  };
+
+  const saveRtspConfigLow = async (rtspUrl) => {
+    try {
+      const res = await apiFetch(`${API_URL}/config/rtsp-low`, {
+        method: 'POST',
+        body:   JSON.stringify({ rtsp_url: rtspUrl }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Failed to save low camera RTSP config');
+      }
+      return await res.json();
+    } catch (err) {
+      throw err;
+    }
+  };
+
   // ── Persist user session ──────────────────────────────────────────────────────
   useEffect(() => {
     if (user) localStorage.setItem('autosense_user', JSON.stringify(user));
@@ -272,6 +298,9 @@ export function ShopProvider({ children }) {
       feedSource,
       setFeedConfig,
       saveRtspConfig,
+      feedSource2,
+      setFeedConfig2,
+      saveRtspConfigLow,
     }}>
       {children}
     </ShopContext.Provider>

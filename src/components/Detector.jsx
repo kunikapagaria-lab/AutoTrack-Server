@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as tf from '@tensorflow/tfjs';
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
-import { PlayCircle, Upload, RefreshCw, X } from 'lucide-react';
+import { PlayCircle, Upload, RefreshCw, Wifi, X } from 'lucide-react';
 
 import { useShop } from '../context/ShopContext';
 
@@ -505,7 +505,7 @@ export default function Detector() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, flexWrap: 'wrap' }}>
           <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="video/*" style={{ display: 'none' }} />
           {!isMonitoring ? (
-            <>
+            feedSource === 'upload' ? (
               <button
                 onClick={toggleMonitoring}
                 disabled={!model}
@@ -518,8 +518,9 @@ export default function Detector() {
                   borderRadius: '6px', cursor: model ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap',
                 }}
               >
-                <Upload size={12} /> {model ? 'Upload Video' : 'Loading…'}
+                <Upload size={12} /> {model ? 'Select Video' : 'Loading…'}
               </button>
+            ) : feedSource === 'rtsp' ? (
               <button
                 onClick={startRTSP}
                 disabled={!model}
@@ -532,8 +533,9 @@ export default function Detector() {
                   borderRadius: '6px', cursor: model ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap',
                 }}
               >
-                <PlayCircle size={12} /> {model ? 'Live RTSP' : 'Initializing…'}
+                <Wifi size={12} /> {model ? 'Reconnect RTSP' : 'Initializing…'}
               </button>
+            ) : (
               <button
                 onClick={startWebcam}
                 disabled={!model}
@@ -546,9 +548,9 @@ export default function Detector() {
                   borderRadius: '6px', cursor: model ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap',
                 }}
               >
-                <RefreshCw size={12} /> {model ? 'Webcam' : 'Initializing…'}
+                <RefreshCw size={12} /> {model ? 'Reconnect Webcam' : 'Initializing…'}
               </button>
-            </>
+            )
           ) : (
             <button
               onClick={toggleMonitoring}
@@ -585,10 +587,12 @@ export default function Detector() {
               <Upload size={40} className="monitoring-icon" />
               <h3 style={{ fontSize: '1rem', marginBottom: '6px' }}>Ready to Process</h3>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                Select a source above — upload a video, connect RTSP, or use your webcam.
+                {feedSource === 'upload'
+                  ? 'Click "Select Video" above to load a video file.'
+                  : `Source: ${feedSource === 'rtsp' ? 'RTSP' : 'Webcam'} — auto-connecting. Use "Reconnect" if the stream drops.`}
               </p>
               <p style={{ marginTop: '6px', fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                Two draggable tripwire lines detect entry &amp; exit direction automatically.
+                Change source in Settings → Feed Settings.
               </p>
             </div>
           </div>

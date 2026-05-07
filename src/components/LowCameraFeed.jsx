@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { Camera, Upload, PlayCircle, RefreshCw, X } from 'lucide-react';
+import { Camera, Upload, Wifi, RefreshCw, X } from 'lucide-react';
+import { useShop } from '../context/ShopContext';
 
 const _API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -54,8 +55,19 @@ const LowCameraFeed = forwardRef(function LowCameraFeed({ onPlateResult }, ref) 
   const isReadyRef    = useRef(false);
   const isRTSPRef     = useRef(false);
 
+  const { feedSource2 } = useShop();
+
   useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
   useEffect(() => { isRTSPRef.current  = isRTSP;  }, [isRTSP]);
+
+  // Auto-start from saved source preference (RTSP and webcam only — upload requires file pick)
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!feedSource2 || autoStartedRef.current || isReady) return;
+    autoStartedRef.current = true;
+    if (feedSource2 === 'rtsp') startRTSP();
+    else if (feedSource2 === 'webcam') startWebcam();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const processQueue = useCallback(async () => {
     if (processingRef.current || burstQueue.current.length === 0) return;
@@ -190,17 +202,19 @@ const LowCameraFeed = forwardRef(function LowCameraFeed({ onPlateResult }, ref) 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, flexWrap: 'wrap' }}>
           <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="video/*" style={{ display: 'none' }} />
           {!isReady ? (
-            <>
+            feedSource2 === 'upload' ? (
               <button onClick={() => fileInputRef.current.click()} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', fontSize: '0.72rem', fontWeight: 700, background: 'rgba(0,210,255,0.12)', color: 'var(--accent-color)', border: '1px solid rgba(0,210,255,0.3)', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                <Upload size={12} /> Upload Video
+                <Upload size={12} /> Select Video
               </button>
+            ) : feedSource2 === 'rtsp' ? (
               <button onClick={startRTSP} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', fontSize: '0.72rem', fontWeight: 700, background: 'rgba(59,130,246,0.12)', color: '#3b82f6', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                <PlayCircle size={12} /> Live RTSP
+                <Wifi size={12} /> Reconnect RTSP
               </button>
+            ) : (
               <button onClick={startWebcam} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', fontSize: '0.72rem', fontWeight: 700, background: 'rgba(168,85,247,0.12)', color: '#a855f7', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                <RefreshCw size={12} /> Webcam
+                <RefreshCw size={12} /> Reconnect Webcam
               </button>
-            </>
+            )
           ) : (
             <button onClick={stopAll} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', fontSize: '0.72rem', fontWeight: 700, background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               <X size={12} /> Stop
@@ -230,7 +244,12 @@ const LowCameraFeed = forwardRef(function LowCameraFeed({ onPlateResult }, ref) 
               <Camera size={40} className="monitoring-icon" style={{ color: '#a855f7' }} />
               <h3 style={{ fontSize: '1rem', marginBottom: '6px' }}>Low Camera — Offline</h3>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                Position this camera close to the plate zone for best OCR results.
+                {feedSource2 === 'upload'
+                  ? 'Click "Select Video" above to load a video file.'
+                  : `Source: ${feedSource2 === 'rtsp' ? 'RTSP' : 'Webcam'} — auto-connecting.`}
+              </p>
+              <p style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                Change source in Settings → Feed Settings.
               </p>
             </div>
           </div>

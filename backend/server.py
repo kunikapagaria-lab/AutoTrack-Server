@@ -586,6 +586,15 @@ def get_rtsp_url() -> str:
     conn.close()
     return row[0] if row else os.getenv("RTSP_URL", "")
 
+def get_rtsp_url_low() -> str:
+    """Returns RTSP URL for the low/plate-reader camera from DB."""
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM app_config WHERE key = 'rtsp_url_low'")
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else os.getenv("RTSP_URL_LOW", "")
+
 def mask_rtsp_url(url: str) -> str:
     """Replace credentials in rtsp://user:pass@host with rtsp://***@host."""
     return re.sub(r'(rtsp://)([^@]+)@', r'\1***@', url) if url else ""
@@ -1091,6 +1100,35 @@ async def save_branch_config_endpoint(
         log.warning("Could not reach cloud to discover branch_id: %s", e)
     return {"ok": True, "branch_id": cloud_branch_id, "connected": cloud_branch_id is not None}
 
+@app.get("/config/feed-low")
+def get_feed_config_low(_: dict = Depends(get_current_user)):
+    """Returns whether the low camera RTSP is configured and a masked URL."""
+    url = get_rtsp_url_low()
+    return {"configured": bool(url), "masked_url": mask_rtsp_url(url)}
+
+
+@app.post("/config/rtsp-low")
+def save_rtsp_config_low(
+    data: RtspConfig,
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if not data.rtsp_url.startswith("rtsp://"):
+        raise HTTPException(status_code=400, detail="URL must start with rtsp://")
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('rtsp_url_low', ?)",
+        (data.rtsp_url,)
+    )
+    conn.commit()
+    conn.close()
+    with _camera_registry_lock:
+        _camera_registry.clear()
+    return {"ok": True, "masked_url": mask_rtsp_url(data.rtsp_url)}
+
+
 @app.post("/config/rtsp")
 def save_rtsp_config(
     data: RtspConfig,
@@ -1497,6 +1535,24 @@ async def video_feed():
             "Expires":                    "0",
             "Connection":                 "keep-alive",
             "Access-Control-Allow-Origin":"*",
+        }
+    )
+
+
+@app.get("/video-feed-low")
+async def video_feed_low():
+    url = get_rtsp_url_low()
+    if not url:
+        raise HTTPException(status_code=503, detail="Low camera RTSP URL not configured")
+    return StreamingResponse(
+        gen_frames(url),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control":               "no-cache, no-store, must-revalidate",
+            "Pragma":                      "no-cache",
+            "Expires":                     "0",
+            "Connection":                  "keep-alive",
+            "Access-Control-Allow-Origin": "*",
         }
     )
 

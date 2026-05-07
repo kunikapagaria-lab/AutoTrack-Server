@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as tf from '@tensorflow/tfjs';
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
-import { PlayCircle, Upload, RefreshCw, X } from 'lucide-react';
+import { PlayCircle, Upload, RefreshCw, Wifi, X } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 
 const _API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -383,17 +383,19 @@ export default function HighCameraDetector({ onTrigger }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, flexWrap: 'wrap' }}>
           <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="video/*" style={{ display: 'none' }} />
           {!isMonitoring ? (
-            <>
+            feedSource === 'upload' ? (
               <button onClick={toggleMonitoring} disabled={!model} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', fontSize: '0.72rem', fontWeight: 700, background: model ? 'rgba(0,210,255,0.12)' : 'rgba(255,255,255,0.05)', color: model ? 'var(--accent-color)' : 'var(--text-secondary)', border: `1px solid ${model ? 'rgba(0,210,255,0.3)' : 'rgba(255,255,255,0.1)'}`, borderRadius: '6px', cursor: model ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap' }}>
-                <Upload size={12} /> {model ? 'Upload Video' : 'Loading…'}
+                <Upload size={12} /> {model ? 'Select Video' : 'Loading…'}
               </button>
+            ) : feedSource === 'rtsp' ? (
               <button onClick={startRTSP} disabled={!model} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', fontSize: '0.72rem', fontWeight: 700, background: model ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.05)', color: model ? '#3b82f6' : 'var(--text-secondary)', border: `1px solid ${model ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.1)'}`, borderRadius: '6px', cursor: model ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap' }}>
-                <PlayCircle size={12} /> {model ? 'Live RTSP' : 'Initializing…'}
+                <Wifi size={12} /> {model ? 'Reconnect RTSP' : 'Initializing…'}
               </button>
+            ) : (
               <button onClick={startWebcam} disabled={!model} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', fontSize: '0.72rem', fontWeight: 700, background: model ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.05)', color: model ? '#10b981' : 'var(--text-secondary)', border: `1px solid ${model ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.1)'}`, borderRadius: '6px', cursor: model ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap' }}>
-                <RefreshCw size={12} /> {model ? 'Webcam' : 'Initializing…'}
+                <RefreshCw size={12} /> {model ? 'Reconnect Webcam' : 'Initializing…'}
               </button>
-            </>
+            )
           ) : (
             <button onClick={toggleMonitoring} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', fontSize: '0.72rem', fontWeight: 700, background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               <X size={12} /> Stop
@@ -420,7 +422,12 @@ export default function HighCameraDetector({ onTrigger }) {
               <Upload size={40} className="monitoring-icon" />
               <h3 style={{ fontSize: '1rem', marginBottom: '6px' }}>High Camera — Ready</h3>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                Tracks vehicles and detects direction. Three draggable lines: L1, Plate Zone, L2.
+                {feedSource === 'upload'
+                  ? 'Click "Select Video" above to load a video file.'
+                  : `Source: ${feedSource === 'rtsp' ? 'RTSP' : 'Webcam'} — auto-connecting.`}
+              </p>
+              <p style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                Three draggable lines: L1, Plate Zone, L2. Change source in Settings.
               </p>
             </div>
           </div>

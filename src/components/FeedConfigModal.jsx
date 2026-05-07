@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { PlayCircle, RefreshCw, Upload, Wifi, X, CheckCircle } from 'lucide-react';
+import { PlayCircle, RefreshCw, Upload, Wifi, X, CheckCircle, Camera } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -10,65 +10,166 @@ const OPTIONS = [
   { id: 'upload', label: 'Upload Video', desc: 'Test or replay with a video file',   icon: Upload,    color: '#00d2ff' },
 ];
 
+function SourcePicker({ label, accentColor, selected, onSelect, isAdmin, rtspInput, onRtspInput, configured, maskedUrl, saveError }) {
+  return (
+    <div style={{ marginBottom: '1.25rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <Camera size={14} color={accentColor} />
+        <span style={{ fontSize: '0.75rem', fontWeight: 800, color: accentColor, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          {label}
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: selected === 'rtsp' ? '1rem' : 0 }}>
+        {OPTIONS.map(opt => {
+          const active = selected === opt.id;
+          return (
+            <button
+              key={opt.id}
+              onClick={() => onSelect(opt.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '10px 14px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                background: active ? `${opt.color}18` : 'rgba(255,255,255,0.03)',
+                border: `1.5px solid ${active ? opt.color : 'rgba(255,255,255,0.08)'}`,
+                color: 'white', transition: 'all 0.15s', width: '100%',
+              }}
+            >
+              <div style={{ width: 30, height: 30, borderRadius: 6, background: `${opt.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <opt.icon size={14} color={opt.color} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: '0.83rem' }}>{opt.label}</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: 1 }}>{opt.desc}</div>
+              </div>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: active ? opt.color : 'rgba(255,255,255,0.1)', transition: 'background 0.15s' }} />
+            </button>
+          );
+        })}
+      </div>
+
+      {selected === 'rtsp' && (
+        <div style={{ marginTop: 8 }}>
+          {configured && maskedUrl && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '7px 10px', borderRadius: 7, marginBottom: 8,
+              background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)',
+            }}>
+              <CheckCircle size={12} color="#10b981" />
+              <div>
+                <div style={{ fontSize: '0.68rem', color: '#10b981', fontWeight: 700 }}>Camera configured</div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: 1 }}>{maskedUrl}</div>
+              </div>
+            </div>
+          )}
+
+          {isAdmin ? (
+            <>
+              <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 700, marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                {configured ? 'Change Camera URL' : 'Camera URL'}
+              </label>
+              <input
+                type="password"
+                value={rtspInput}
+                onChange={e => onRtspInput(e.target.value)}
+                placeholder="rtsp://user:pass@192.168.1.100:554/stream"
+                autoComplete="off"
+                style={{
+                  width: '100%', padding: '9px 11px', borderRadius: 7, fontSize: '0.78rem',
+                  background: 'rgba(255,255,255,0.05)', color: 'white',
+                  border: `1px solid ${rtspInput.trim() ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.12)'}`,
+                  outline: 'none', fontFamily: 'monospace', boxSizing: 'border-box',
+                }}
+              />
+              {rtspInput.trim() && !rtspInput.trim().startsWith('rtsp://') && (
+                <div style={{ fontSize: '0.68rem', color: '#f5a623', marginTop: 4 }}>URL must start with rtsp://</div>
+              )}
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                Credentials are stored securely on the server — never in the browser.
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', padding: '6px 0' }}>
+              {configured ? 'Camera is configured. Contact an admin to change the URL.' : 'No camera configured. Contact an admin to set the RTSP URL.'}
+            </div>
+          )}
+
+          {saveError && (
+            <div style={{ fontSize: '0.7rem', color: '#ef4444', marginTop: 5 }}>{saveError}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FeedConfigModal({ isOpen, onClose }) {
-  const { user, feedSource, setFeedConfig, saveRtspConfig } = useShop();
-  const isFirstLaunch = !feedSource;
+  const { user, feedSource, setFeedConfig, saveRtspConfig, feedSource2, setFeedConfig2, saveRtspConfigLow } = useShop();
   const isAdmin = user?.role === 'admin';
 
-  const [selected,    setSelected]    = useState(feedSource || 'webcam');
-  const [rtspInput,   setRtspInput]   = useState('');
-  const [maskedUrl,   setMaskedUrl]   = useState('');
-  const [configured,  setConfigured]  = useState(false);
-  const [saving,      setSaving]      = useState(false);
-  const [saveError,   setSaveError]   = useState('');
+  const [sel1,    setSel1]    = useState(feedSource  || 'rtsp');
+  const [rtsp1,   setRtsp1]   = useState('');
+  const [masked1, setMasked1] = useState('');
+  const [conf1,   setConf1]   = useState(false);
+  const [err1,    setErr1]    = useState('');
 
-  // Fetch current RTSP config status from backend whenever modal opens
+  const [sel2,    setSel2]    = useState(feedSource2 || 'rtsp');
+  const [rtsp2,   setRtsp2]   = useState('');
+  const [masked2, setMasked2] = useState('');
+  const [conf2,   setConf2]   = useState(false);
+  const [err2,    setErr2]    = useState('');
+
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
     if (!isOpen || !user) return;
+    setSel1(feedSource  || 'rtsp');
+    setSel2(feedSource2 || 'rtsp');
     fetch(`${API_URL}/config/feed`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('autotrack_access_token')}` },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data) {
-          setConfigured(data.configured);
-          setMaskedUrl(data.masked_url || '');
-        }
-      })
+    }).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) { setConf1(d.configured); setMasked1(d.masked_url || ''); } })
       .catch(() => {});
-  }, [isOpen, user]);
+    fetch(`${API_URL}/config/feed-low`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('autotrack_access_token')}` },
+    }).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) { setConf2(d.configured); setMasked2(d.masked_url || ''); } })
+      .catch(() => {});
+  }, [isOpen, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!isOpen) return null;
 
   const handleSave = async () => {
-    setSaveError('');
-
-    // If RTSP selected and admin provided a new URL — save to backend
-    if (selected === 'rtsp' && rtspInput.trim()) {
-      if (!isAdmin) {
-        setSaveError('Only admins can change the camera URL.');
-        return;
+    setErr1(''); setErr2('');
+    setSaving(true);
+    try {
+      if (sel1 === 'rtsp' && rtsp1.trim()) {
+        if (!isAdmin) { setErr1('Only admins can change the camera URL.'); setSaving(false); return; }
+        const r = await saveRtspConfig(rtsp1.trim());
+        setMasked1(r.masked_url || ''); setConf1(true); setRtsp1('');
       }
-      setSaving(true);
-      try {
-        const result = await saveRtspConfig(rtspInput.trim());
-        setMaskedUrl(result.masked_url || '');
-        setConfigured(true);
-        setRtspInput('');
-      } catch (err) {
-        setSaveError(err.message || 'Failed to save camera URL.');
-        setSaving(false);
-        return;
+      if (sel2 === 'rtsp' && rtsp2.trim()) {
+        if (!isAdmin) { setErr2('Only admins can change the camera URL.'); setSaving(false); return; }
+        const r = await saveRtspConfigLow(rtsp2.trim());
+        setMasked2(r.masked_url || ''); setConf2(true); setRtsp2('');
       }
+    } catch (err) {
+      const msg = err.message || 'Failed to save camera URL.';
+      if (sel1 === 'rtsp' && rtsp1.trim()) setErr1(msg);
+      else setErr2(msg);
       setSaving(false);
+      return;
     }
-
-    // feedSource is a device preference — save to localStorage only
-    setFeedConfig(selected);
+    setFeedConfig(sel1);
+    setFeedConfig2(sel2);
+    setSaving(false);
     onClose?.();
   };
 
-  const canSave = selected !== 'rtsp' || configured || rtspInput.trim().length > 0;
+  const canSave =
+    (sel1 !== 'rtsp' || conf1 || rtsp1.trim().length > 0) &&
+    (sel2 !== 'rtsp' || conf2 || rtsp2.trim().length > 0);
 
   return (
     <div style={{
@@ -77,9 +178,9 @@ export default function FeedConfigModal({ isOpen, onClose }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       backdropFilter: 'blur(6px)',
     }}>
-      <div className="panel" style={{ width: '100%', maxWidth: '480px', padding: '2rem', position: 'relative' }}>
+      <div className="panel" style={{ width: '100%', maxWidth: '520px', padding: '2rem', position: 'relative', maxHeight: '90vh', overflowY: 'auto' }}>
 
-        {!isFirstLaunch && onClose && (
+        {onClose && (
           <button
             onClick={onClose}
             style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 4 }}
@@ -92,107 +193,41 @@ export default function FeedConfigModal({ isOpen, onClose }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
             <PlayCircle size={18} color="var(--accent-color)" />
             <h2 style={{ fontSize: '1rem', fontWeight: 900, margin: 0, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-              {isFirstLaunch ? 'Choose Feed Source' : 'Feed Settings'}
+              Feed Settings
             </h2>
           </div>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
-            {isFirstLaunch
-              ? 'Select how this device receives video. You can change this later in Settings.'
-              : 'Change the video input source for this device.'}
+            Configure the video input source for each camera independently.
           </p>
         </div>
 
-        {/* Source options */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: '1.25rem' }}>
-          {OPTIONS.map(opt => {
-            const active = selected === opt.id;
-            return (
-              <button
-                key={opt.id}
-                onClick={() => setSelected(opt.id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 14,
-                  padding: '13px 16px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
-                  background: active ? `${opt.color}18` : 'rgba(255,255,255,0.03)',
-                  border: `1.5px solid ${active ? opt.color : 'rgba(255,255,255,0.08)'}`,
-                  color: 'white', transition: 'all 0.15s', width: '100%',
-                }}
-              >
-                <div style={{ width: 36, height: 36, borderRadius: 8, background: `${opt.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <opt.icon size={17} color={opt.color} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>{opt.label}</div>
-                  <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', marginTop: 2 }}>{opt.desc}</div>
-                </div>
-                <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: active ? opt.color : 'rgba(255,255,255,0.1)', transition: 'background 0.15s' }} />
-              </button>
-            );
-          })}
-        </div>
+        <SourcePicker
+          label="Camera 1 — High / Tracking"
+          accentColor="var(--accent-color)"
+          selected={sel1}
+          onSelect={setSel1}
+          isAdmin={isAdmin}
+          rtspInput={rtsp1}
+          onRtspInput={setRtsp1}
+          configured={conf1}
+          maskedUrl={masked1}
+          saveError={err1}
+        />
 
-        {/* RTSP config — only shown when RTSP is selected */}
-        {selected === 'rtsp' && (
-          <div style={{ marginBottom: '1.25rem' }}>
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginBottom: '1.25rem' }} />
 
-            {/* Current camera status */}
-            {configured && maskedUrl && (
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 12px', borderRadius: 8, marginBottom: 10,
-                background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)',
-              }}>
-                <CheckCircle size={13} color="#10b981" />
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 700 }}>Camera configured</div>
-                  <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: 1 }}>
-                    {maskedUrl}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* URL change field — admin only */}
-            {isAdmin ? (
-              <>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  {configured ? 'Change Camera URL' : 'Camera URL'}
-                </label>
-                <input
-                  type="password"
-                  value={rtspInput}
-                  onChange={e => setRtspInput(e.target.value)}
-                  placeholder="rtsp://user:pass@192.168.1.100:554/stream"
-                  autoComplete="off"
-                  style={{
-                    width: '100%', padding: '10px 12px', borderRadius: 8, fontSize: '0.8rem',
-                    background: 'rgba(255,255,255,0.05)', color: 'white',
-                    border: `1px solid ${rtspInput.trim() ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.12)'}`,
-                    outline: 'none', fontFamily: 'monospace', boxSizing: 'border-box',
-                  }}
-                />
-                {rtspInput.trim() && !rtspInput.trim().startsWith('rtsp://') && (
-                  <div style={{ fontSize: '0.7rem', color: '#f5a623', marginTop: 5 }}>
-                    URL must start with rtsp://
-                  </div>
-                )}
-                <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: 5 }}>
-                  Credentials are stored securely on the server — never in the browser.
-                </div>
-              </>
-            ) : (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', padding: '8px 0' }}>
-                {configured
-                  ? 'Camera is configured. Contact an admin to change the URL.'
-                  : 'No camera configured. Contact an admin to set the RTSP URL.'}
-              </div>
-            )}
-
-            {saveError && (
-              <div style={{ fontSize: '0.72rem', color: '#ef4444', marginTop: 6 }}>{saveError}</div>
-            )}
-          </div>
-        )}
+        <SourcePicker
+          label="Camera 2 — Low / Plate Reader"
+          accentColor="#a855f7"
+          selected={sel2}
+          onSelect={setSel2}
+          isAdmin={isAdmin}
+          rtspInput={rtsp2}
+          onRtspInput={setRtsp2}
+          configured={conf2}
+          maskedUrl={masked2}
+          saveError={err2}
+        />
 
         <div style={{ display: 'flex', gap: 10 }}>
           <button
@@ -205,9 +240,9 @@ export default function FeedConfigModal({ isOpen, onClose }) {
               opacity: canSave && !saving ? 1 : 0.4, transition: 'opacity 0.15s',
             }}
           >
-            {saving ? 'Saving…' : isFirstLaunch ? 'Start Monitoring' : 'Save Changes'}
+            {saving ? 'Saving…' : 'Save Changes'}
           </button>
-          {!isFirstLaunch && onClose && (
+          {onClose && (
             <button
               onClick={onClose}
               style={{
