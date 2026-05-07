@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ShopProvider, useShop } from './context/ShopContext';
 import Detector from './components/Detector';
+import DualCameraDetector from './components/DualCameraDetector';
 import WorkshopBoard from './components/WorkshopBoard';
 import ErrorBoundary from './components/ErrorBoundary';
 import AuthPortal from './components/AuthPortal';
@@ -16,7 +17,8 @@ import './index.css';
 
 function MainApp() {
   const { user, logout, vehicles, feedSource } = useShop();
-  const [view, setView] = useState('dashboard'); // 'dashboard', 'board'
+  const [view,       setView]       = useState('dashboard'); // 'dashboard', 'board'
+  const [dualCamera, setDualCamera] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSettings,        setShowSettings]        = useState(false);
@@ -101,18 +103,33 @@ function MainApp() {
         </div>
 
         <nav style={{ padding: 0 }}>
-          <button 
+          <button
             onClick={() => setView('dashboard')}
             className={`nav-item ${view === 'dashboard' ? 'active' : ''}`}
           >
             Gate Monitor
           </button>
-          <button 
+          <button
             onClick={() => setView('board')}
             className={`nav-item ${view === 'board' ? 'active' : ''}`}
           >
             Workshop Board
           </button>
+          {view === 'dashboard' && (
+            <button
+              onClick={() => setDualCamera(d => !d)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '5px 14px', fontSize: '0.72rem', fontWeight: 700,
+                background: dualCamera ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.05)',
+                color: dualCamera ? '#a855f7' : 'var(--text-secondary)',
+                border: `1px solid ${dualCamera ? 'rgba(168,85,247,0.4)' : 'rgba(255,255,255,0.1)'}`,
+                borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.2s',
+              }}
+            >
+              {dualCamera ? '⊛ Dual Cam' : '⊙ Single Cam'}
+            </button>
+          )}
         </nav>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', borderLeft: '1px solid var(--border-color)', paddingLeft: '2rem', position: 'relative' }}>
@@ -289,7 +306,7 @@ function MainApp() {
           <div className="dashboard-grid">
             <div style={{ marginBottom: '1.5rem' }}>
               <ErrorBoundary label="Gate Monitor">
-                <Detector />
+                {dualCamera ? <DualCameraDetector /> : <Detector />}
               </ErrorBoundary>
             </div>
 

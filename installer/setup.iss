@@ -1,5 +1,6 @@
 #define MyAppName    "AutoTrack"
 #define MyAppVersion "1.0"
+#define BuildDate    GetDateTimeString('yyyy-mm-dd', '', '')
 
 [Setup]
 AppId={{8F3A2D1B-4C5E-6F7A-8B9C-0D1E2F3A4B5C}
@@ -10,7 +11,7 @@ DefaultDirName=C:\AutoTrack
 DisableProgramGroupPage=yes
 DisableDirPage=yes
 OutputDir=output
-OutputBaseFilename=AutoTrack-Setup
+OutputBaseFilename=AutoTrack-Setup-{#BuildDate}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
