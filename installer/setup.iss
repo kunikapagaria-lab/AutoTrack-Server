@@ -29,24 +29,36 @@ Source: "AutoTrack.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Docker Compose config — uses pre-built images from Docker Hub
 Source: "docker-compose.branch.yml"; DestDir: "{app}"; DestName: "docker-compose.yml"; Flags: ignoreversion
 
-; Env generator script — deleted automatically after use
-Source: "write_env.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
-
 [Icons]
-; Desktop shortcut — double-click to open AutoTrack
 Name: "{commondesktop}\AutoTrack"; Filename: "{app}\AutoTrack.exe"; Comment: "Open AutoTrack Workshop Manager"
 
 [Code]
 
-// Three wizard input pages
 var
-  BranchPage: TInputQueryWizardPage;   // Branch name
-  RTSPPage:   TInputQueryWizardPage;   // Camera URL
-  APIKeyPage: TInputQueryWizardPage;   // Cloud API key
+  BranchPage: TInputQueryWizardPage;
+  RTSPPage:   TInputQueryWizardPage;
+  APIKeyPage: TInputQueryWizardPage;
+
+// ── Generate a random 64-char hex JWT key using Pascal only — no PowerShell ──
+function GenerateJWTKey: String;
+var
+  i: Integer;
+  key: String;
+  chars: String;
+  t: Cardinal;
+begin
+  chars := '0123456789ABCDEF';
+  key   := '';
+  t     := GetTickCount;
+  // Seed with tick count + process time for reasonable randomness
+  for i := 1 to 64 do begin
+    t   := (t * 1103515245 + 12345) and $7FFFFFFF;
+    key := key + chars[(t mod 16) + 1];
+  end;
+  Result := key;
+end;
 
 // ── Check Docker Desktop is installed ─────────────────────────────────────────
-// Docker Desktop must be installed BEFORE running this installer.
-// We check by running "docker --version" and seeing if it succeeds.
 function DockerInstalled: Boolean;
 var
   ResultCode: Integer;
@@ -59,135 +71,134 @@ end;
 // ── Create the three wizard pages ─────────────────────────────────────────────
 procedure InitializeWizard;
 begin
-  // Page 1: Branch Name
-  // This is the name that appears in the superadmin cloud dashboard.
   BranchPage := CreateInputQueryPage(
     wpWelcome,
     'Branch Name',
     'What is the name of this branch location?',
-    'This name will appear in the admin dashboard to identify this branch.' + #13#10 +
-    'Example: North Branch, Koramangala Workshop, HSR Layout'
+    'This name will appear in the admin dashboard to identify this branch.'
   );
   BranchPage.Add('Branch Name:', False);
   BranchPage.Values[0] := 'Main Branch';
 
-  // Page 2: RTSP Camera URL
-  // The IP camera address. Optional — can be set later from inside the app.
   RTSPPage := CreateInputQueryPage(
     BranchPage.ID,
     'Camera Setup',
     'Enter your IP camera RTSP URL',
-    'This is the address of the RTSP camera at this branch.' + #13#10 +
-    'You can leave this blank and set it later from the app Settings menu.'
+    'Leave blank to set later from the app Settings menu.'
   );
   RTSPPage.Add('RTSP URL (leave blank to skip):', False);
   RTSPPage.Values[0] := '';
 
-  // Page 3: Branch API Key
-  // The superadmin generates this from the cloud dashboard before installation.
-  // It links this branch to the cloud server automatically.
   APIKeyPage := CreateInputQueryPage(
     RTSPPage.ID,
     'Cloud Connection',
     'Enter the Branch API Key',
-    'The super admin generates this key from the cloud dashboard.' + #13#10 +
-    'It connects this branch to the cloud server automatically.' + #13#10 + #13#10 +
-    'If you don''t have it yet, leave blank — you can connect later from the app.'
+    'The super admin generates this from the cloud dashboard.' + #13#10 +
+    'Leave blank if you don''t have it yet — configure later in Branch Sync.'
   );
   APIKeyPage.Add('Branch API Key (leave blank to skip):', False);
   APIKeyPage.Values[0] := '';
 end;
 
-// ── Block install if Docker is not installed ───────────────────────────────────
-// We show a clear message explaining exactly what to do.
+// ── Block if Docker not installed ─────────────────────────────────────────────
 function InitializeSetup: Boolean;
 begin
   Result := True;
   if not DockerInstalled then begin
     MsgBox(
       'Docker Desktop is not installed.' + #13#10 + #13#10 +
-      'AutoTrack requires Docker Desktop to run.' + #13#10 + #13#10 +
-      'Please do this first:' + #13#10 +
-      '  1. Go to https://www.docker.com/products/docker-desktop' + #13#10 +
-      '  2. Download and install Docker Desktop' + #13#10 +
-      '  3. Restart this PC when asked' + #13#10 +
-      '  4. Open Docker Desktop from the Start menu' + #13#10 +
-      '  5. Wait for the whale icon in the taskbar to stop animating' + #13#10 +
-      '  6. Run this installer again',
+      'Please install it from https://www.docker.com/products/docker-desktop' + #13#10 +
+      'then run this installer again.',
       mbError, MB_OK
     );
     Result := False;
   end;
 end;
 
-// ── Validate required fields ───────────────────────────────────────────────────
+// ── Validate branch name ───────────────────────────────────────────────────────
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  // Branch name is required — we can't install without knowing what to call this branch
   if CurPageID = BranchPage.ID then begin
     if Trim(BranchPage.Values[0]) = '' then begin
-      MsgBox('Please enter a branch name before continuing.', mbError, MB_OK);
+      MsgBox('Please enter a branch name.', mbError, MB_OK);
       Result := False;
     end;
   end;
 end;
 
-// ── Post-install: write config files and download Docker images ────────────────
-// This runs after all files have been copied to C:\AutoTrack
+// ── Write all config files directly from Pascal — no PowerShell needed ────────
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ResultCode: Integer;
-  PSArgs:     String;
+  ResultCode:      Integer;
+  InstallDir:      String;
+  BackendDir:      String;
+  DataDir:         String;
+  JWTKey:          String;
+  EnvContent:      String;
+  ConfigContent:   String;
+  ApiKey:          String;
+  BranchName:      String;
+  RTSPUrl:         String;
 begin
   if CurStep = ssPostInstall then begin
+    InstallDir := ExpandConstant('{app}');
+    BackendDir := InstallDir + '\backend';
+    DataDir    := BackendDir + '\data';
 
-    // Write the RTSP URL and API Key to temp files.
-    // We use temp files instead of command-line arguments because
-    // special characters in camera URLs (like @ : /) break command-line parsing.
-    SaveStringToFile(
-      ExpandConstant('{tmp}\autotrack_rtsp.txt'),
-      RTSPPage.Values[0],
-      False
-    );
-    SaveStringToFile(
-      ExpandConstant('{tmp}\autotrack_apikey.txt'),
-      APIKeyPage.Values[0],
-      False
-    );
+    // Create directories
+    ForceDirectories(BackendDir);
+    ForceDirectories(DataDir);
 
-    // Run write_env.ps1 which:
-    //   - Reads the temp files we just wrote
-    //   - Generates a random JWT security key
-    //   - Writes backend\.env with all credentials
-    //   - Writes backend\data\initial_config.json for auto cloud connection
-    PSArgs := '-ExecutionPolicy Bypass -NonInteractive -File "' +
-              ExpandConstant('{tmp}\write_env.ps1') + '"' +
-              ' -InstallDir "' + ExpandConstant('{app}') + '"' +
-              ' -BranchName "' + BranchPage.Values[0] + '"';
+    // Generate JWT secret key
+    JWTKey     := GenerateJWTKey;
+    BranchName := BranchPage.Values[0];
+    RTSPUrl    := RTSPPage.Values[0];
+    ApiKey     := APIKeyPage.Values[0];
 
-    Exec('powershell.exe', PSArgs, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    // Write backend\.env  — pure Pascal, no PowerShell
+    EnvContent :=
+      'JWT_SECRET_KEY=' + JWTKey                                                                      + #13#10 +
+      ''                                                                                              + #13#10 +
+      'RTSP_URL=' + RTSPUrl                                                                           + #13#10 +
+      ''                                                                                              + #13#10 +
+      'ALLOWED_ORIGINS=http://localhost,http://localhost:5173,http://localhost:4173'                  + #13#10 +
+      'LOG_LEVEL=INFO'                                                                                + #13#10 +
+      'IMAGE_RETENTION_DAYS=30'                                                                       + #13#10 +
+      ''                                                                                              + #13#10 +
+      'S3_ENDPOINT_URL=https://6aad6ffcea8c29770bf2afafb6cb7209.r2.cloudflarestorage.com'            + #13#10 +
+      'S3_ACCESS_KEY_ID=44b785c8c2e1514ffb77336e4260b21f'                                            + #13#10 +
+      'S3_SECRET_ACCESS_KEY=26702d93588cbcd236d32de3040824107e4adc186e5b195363c06ca711a72623'        + #13#10 +
+      'S3_BUCKET_NAME=autotrack-images'                                                              + #13#10 +
+      'S3_PUBLIC_URL=https://pub-0c5f3e700bce4ecca623010ae3a76e47.r2.dev'                            + #13#10 +
+      ''                                                                                              + #13#10 +
+      'SENTRY_DSN=';
 
-    // Download Docker images from Docker Hub.
-    // This opens a visible terminal window so the user can see the progress.
-    // The images are about 3-4 GB so this takes 5-15 minutes depending on internet.
+    SaveStringToFile(BackendDir + '\.env', EnvContent, False);
+
+    // Write initial_config.json for auto cloud connection (if API key provided)
+    if ApiKey <> '' then begin
+      ConfigContent :=
+        '{' + #13#10 +
+        '  "cloud_url":     "http://13.63.172.65/api",' + #13#10 +
+        '  "cloud_api_key": "' + ApiKey + '",' + #13#10 +
+        '  "branch_name":   "' + BranchName + '"' + #13#10 +
+        '}';
+      SaveStringToFile(DataDir + '\initial_config.json', ConfigContent, False);
+    end;
+
+    // Pull Docker images
     Exec(
       'cmd.exe',
       '/k "echo. && ' +
-          'echo  ================================================ && ' +
-          'echo  Downloading AutoTrack components from internet... && ' +
-          'echo  This takes 5-15 minutes depending on your speed. && ' +
-          'echo  Please wait - do NOT close this window. && ' +
-          'echo  ================================================ && ' +
+          'echo  Downloading AutoTrack components... && ' +
+          'echo  This takes 5-15 minutes. Do NOT close this window. && ' +
           'echo. && ' +
-          'cd /d "' + ExpandConstant('{app}') + '" && ' +
+          'cd /d "' + InstallDir + '" && ' +
           'docker compose pull && ' +
-          'echo. && ' +
-          'echo  Download complete! && ' +
-          'echo  Click the AutoTrack icon on your desktop to start. && ' +
-          'timeout /t 5 && ' +
-          'exit"',
-      ExpandConstant('{app}'),
+          'echo. && echo  Done! Close this window. && ' +
+          'timeout /t 5 && exit"',
+      InstallDir,
       SW_SHOW,
       ewWaitUntilTerminated,
       ResultCode
@@ -195,58 +206,46 @@ begin
   end;
 end;
 
-// ── Summary page shown before install begins ───────────────────────────────────
-// This lets the user review their inputs before clicking Install.
+// ── Summary before install ────────────────────────────────────────────────────
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
   MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 var
-  RTSPDisplay:   String;
-  APIKeyDisplay: String;
+  APIDisplay: String;
+  RTSPDisplay: String;
 begin
+  if APIKeyPage.Values[0] = '' then
+    APIDisplay := '(set later in Branch Sync)'
+  else
+    APIDisplay := Copy(APIKeyPage.Values[0], 1, 8) + '...';
+
   if RTSPPage.Values[0] = '' then
-    RTSPDisplay := '(set later in app Settings)'
+    RTSPDisplay := '(set later in Settings)'
   else
     RTSPDisplay := RTSPPage.Values[0];
-
-  if APIKeyPage.Values[0] = '' then
-    APIKeyDisplay := '(connect manually in app after install)'
-  else
-    APIKeyDisplay := Copy(APIKeyPage.Values[0], 1, 8) + '...';  // show only first 8 chars for security
 
   Result :=
     'Branch Name:   ' + BranchPage.Values[0] + NewLine +
     'Camera URL:    ' + RTSPDisplay + NewLine +
-    'Cloud API Key: ' + APIKeyDisplay + NewLine +
+    'Cloud API Key: ' + APIDisplay + NewLine +
     NewLine +
     'Install folder: C:\AutoTrack' + NewLine +
     NewLine +
-    'What will happen:' + NewLine +
-    Space + '1. Config files are created with your settings' + NewLine +
-    Space + '2. AutoTrack components are downloaded (3-4 GB, 5-15 min)' + NewLine +
-    Space + '3. A desktop shortcut is created' + NewLine +
-    Space + '4. Double-click AutoTrack to open the app' + NewLine +
-    Space + '5. Register as Admin — cloud connection is automatic';
+    'What happens next:' + NewLine +
+    Space + '1. Config files written automatically' + NewLine +
+    Space + '2. Docker images downloaded (5-15 min)' + NewLine +
+    Space + '3. Double-click AutoTrack on desktop to start';
 end;
 
-// ── Uninstall: offer to stop and remove Docker containers ─────────────────────
+// ── Uninstall ─────────────────────────────────────────────────────────────────
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;
 begin
   if CurUninstallStep = usUninstall then begin
-    if MsgBox(
-      'Do you want to stop and remove the AutoTrack Docker containers?' + #13#10 +
-      '(Your vehicle data will be preserved)',
-      mbConfirmation, MB_YESNO
-    ) = IDYES then begin
-      Exec(
-        'cmd.exe',
+    if MsgBox('Stop and remove AutoTrack Docker containers?',
+              mbConfirmation, MB_YESNO) = IDYES then
+      Exec('cmd.exe',
         '/k "cd /d C:\AutoTrack && docker compose down && timeout /t 3"',
-        'C:\AutoTrack',
-        SW_SHOW,
-        ewWaitUntilTerminated,
-        ResultCode
-      );
-    end;
+        'C:\AutoTrack', SW_SHOW, ewWaitUntilTerminated, ResultCode);
   end;
 end;
