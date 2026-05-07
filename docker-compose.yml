@@ -29,6 +29,7 @@ services:
       - WATCHTOWER_POLL_INTERVAL=300   # check Docker Hub every 5 minutes
       - WATCHTOWER_CLEANUP=true        # remove old images after update
       - WATCHTOWER_INCLUDE_RESTARTING=true
+      - DOCKER_API_VERSION=1.43
 
 volumes:
   uploads:

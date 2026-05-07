@@ -29,6 +29,7 @@ services:
       - WATCHTOWER_POLL_INTERVAL=300
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_INCLUDE_RESTARTING=true
+      - DOCKER_API_VERSION=1.43
 
 volumes:
   uploads:
