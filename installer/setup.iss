@@ -45,16 +45,11 @@ var
   i: Integer;
   key: String;
   chars: String;
-  t: Cardinal;
 begin
   chars := '0123456789ABCDEF';
   key   := '';
-  t     := GetTickCount;
-  // Seed with tick count + process time for reasonable randomness
-  for i := 1 to 64 do begin
-    t   := (t * 1103515245 + 12345) and $7FFFFFFF;
-    key := key + chars[(t mod 16) + 1];
-  end;
+  for i := 1 to 64 do
+    key := key + chars[Random(16) + 1];
   Result := key;
 end;
 
