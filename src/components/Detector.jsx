@@ -361,7 +361,6 @@ export default function Detector() {
 
             // Upload vehicle frame to server (async), get a stable URL
             const imageUrl = await uploadFrame(rawFrame);
-            console.log('[DETECT]', direction, 'imageUrl:', imageUrl ? imageUrl.slice(0, 60) : 'EMPTY', 'rawFrame:', rawFrame ? rawFrame.slice(0, 30) : 'EMPTY');
 
             // Add to WAITING column with scanning state
             addVehicle({
@@ -430,7 +429,6 @@ export default function Detector() {
                   );
                   if (entered) {
                     // Known exit: mark TEMP_OUT, discard placeholder
-                    console.log('[DETECT] EGRESS → TEMP_OUT for', entered.id, 'imageUrl:', imageUrl ? imageUrl.slice(0, 60) : 'EMPTY');
                     updateVehicleStatus(entered.id, 'TEMP_OUT', imageUrl);
                     removeVehicle(pendingId);
                   } else {

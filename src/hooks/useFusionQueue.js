@@ -51,7 +51,6 @@ export function useFusionQueue() {
       triggeredAt: now,
       direction,
       vehicleId,
-      imageUrl: imageUrl || null,
       resolved: false,
     });
   }, [addVehicle]);
@@ -71,7 +70,11 @@ export function useFusionQueue() {
     if (!best) return;
 
     best.resolved = true;
-    const { vehicleId, direction, imageUrl: triggerImageUrl } = best;
+    const { vehicleId, direction } = best;
+    // imageUrl is uploaded async after the trigger fires — read it from the
+    // vehicle record now (it will have been set by updateVehicle by this point)
+    const pendingVehicle = vehiclesRef.current.find(v => v.id === vehicleId);
+    const triggerImageUrl = pendingVehicle?.imageUrl || null;
 
     // No plate found — leave in WAITING for manual entry
     if (!plateText) {

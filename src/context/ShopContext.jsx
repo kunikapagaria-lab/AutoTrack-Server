@@ -244,7 +244,6 @@ export function ShopProvider({ children }) {
     const historyEntry = imageUrl
       ? { status: newStatus, timestamp, imageUrl }
       : { status: newStatus, timestamp };
-    console.log('[STATUS]', id, '→', newStatus, '| imageUrl:', imageUrl ? imageUrl.slice(0, 60) : 'NONE', '| entry keys:', Object.keys(historyEntry));
     setVehicles(prev => prev.map(v =>
       v.id === id
         ? { ...v, status: newStatus, history: [...(v.history || []), historyEntry], lastUpdate: timestamp }
