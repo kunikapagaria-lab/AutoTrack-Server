@@ -196,6 +196,11 @@ class ApproveUserPayload(BaseModel):
 class VehicleStatusUpdateCloud(BaseModel):
     status: str
 
+class SuperadminCreate(BaseModel):
+    username: str
+    email:    str
+    password: str
+
 # ── Auth endpoints ─────────────────────────────────────────────────────────────
 
 @app.post('/register')
@@ -594,6 +599,59 @@ async def pending_approvals_count(_: dict = Depends(get_current_user)):
     count = c.fetchone()[0]
     conn.close()
     return {'count': count}
+
+# ── Superadmin account management ──────────────────────────────────────────────
+
+@app.get('/superadmins')
+async def list_superadmins(_: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT id, username, email FROM users ORDER BY id')
+    rows = c.fetchall()
+    conn.close()
+    return [{'id': r[0], 'username': r[1], 'email': r[2]} for r in rows]
+
+@app.post('/superadmins', status_code=201)
+async def create_superadmin(data: SuperadminCreate, _: dict = Depends(get_current_user)):
+    if len(data.password) < 8:
+        raise HTTPException(status_code=400, detail='Password must be at least 8 characters')
+    if not data.username.strip():
+        raise HTTPException(status_code=400, detail='Username is required')
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT 1 FROM users WHERE email = ?', (data.email.lower().strip(),))
+    if c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=409, detail='An account with this email already exists')
+    c.execute(
+        "INSERT INTO users (username, email, hashed_password, role) VALUES (?, ?, ?, 'superadmin')",
+        (data.username.strip(), data.email.lower().strip(), pwd_ctx.hash(data.password))
+    )
+    conn.commit()
+    new_id = c.lastrowid
+    conn.close()
+    return {'id': new_id, 'username': data.username.strip(), 'email': data.email.lower().strip()}
+
+@app.delete('/superadmins/{user_id}')
+async def delete_superadmin(user_id: int, current: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT email FROM users WHERE id = ?', (user_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail='Superadmin not found')
+    if row[0].lower() == current.get('sub', '').lower():
+        conn.close()
+        raise HTTPException(status_code=400, detail='You cannot delete your own account')
+    c.execute('SELECT COUNT(*) FROM users')
+    if c.fetchone()[0] <= 1:
+        conn.close()
+        raise HTTPException(status_code=400, detail='Cannot delete the last superadmin account')
+    c.execute('DELETE FROM users WHERE id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+    return {'ok': True}
 
 if __name__ == '__main__':
     import uvicorn

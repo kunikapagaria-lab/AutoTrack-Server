@@ -83,6 +83,10 @@ export default function AdminCloudView({ onLogout }) {
   const [pendingUsers,   setPendingUsers]   = useState([]);
   const [loadingPending, setLoadingPending] = useState(false);
 
+  // Superadmins tab
+  const [superadmins,        setSuperadmins]        = useState([]);
+  const [loadingSuperadmins, setLoadingSuperadmins] = useState(false);
+
   // ── Data fetchers ───────────────────────────────────────────────────────────
 
   const fetchPendingCount = () => {
@@ -123,10 +127,20 @@ export default function AdminCloudView({ onLogout }) {
       .finally(() => setLoadingPending(false));
   };
 
+  const loadSuperadmins = () => {
+    setLoadingSuperadmins(true);
+    authFetch(`${API_URL}/superadmins`)
+      .then(r => r.json())
+      .then(data => setSuperadmins(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => setLoadingSuperadmins(false));
+  };
+
   useEffect(() => { loadBranches(); fetchPendingCount(); }, []);
   useEffect(() => {
-    if (tab === 'users')   loadAllUsers();
-    if (tab === 'pending') loadPendingUsers();
+    if (tab === 'users')        loadAllUsers();
+    if (tab === 'pending')      loadPendingUsers();
+    if (tab === 'superadmins')  loadSuperadmins();
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Branch actions ──────────────────────────────────────────────────────────
@@ -218,6 +232,21 @@ export default function AdminCloudView({ onLogout }) {
     } catch { alert('Failed to process approval'); }
   };
 
+  const addSuperadmin = async (username, email, password) => {
+    const res  = await authFetch(`${API_URL}/superadmins`, {
+      method: 'POST', body: JSON.stringify({ username, email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to create account');
+    setSuperadmins(prev => [...prev, data]);
+  };
+
+  const deleteSuperadmin = async (id) => {
+    const res = await authFetch(`${API_URL}/superadmins/${id}`, { method: 'DELETE' });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed'); }
+    setSuperadmins(prev => prev.filter(u => u.id !== id));
+  };
+
   const downloadConsolidatedCSV = () => {
     authFetch(`${API_URL}/vehicles/export`)
       .then(r => r.blob())
@@ -248,9 +277,10 @@ export default function AdminCloudView({ onLogout }) {
 
         <nav style={{ padding: 0, display: 'flex', gap: '4px' }}>
           {[
-            { id: 'branches', label: 'Branches' },
-            { id: 'users',    label: 'All Users' },
-            { id: 'pending',  label: 'Pending Approvals', badge: pendingCount },
+            { id: 'branches',    label: 'Branches' },
+            { id: 'users',       label: 'All Users' },
+            { id: 'pending',     label: 'Pending Approvals', badge: pendingCount },
+            { id: 'superadmins', label: 'Superadmins' },
           ].map(({ id, label, badge }) => (
             <button key={id} onClick={() => setTab(id)} className={`nav-item ${tab === id ? 'active' : ''}`}
               style={{ position: 'relative' }}>
@@ -317,6 +347,16 @@ export default function AdminCloudView({ onLogout }) {
 
         {tab === 'pending' && (
           <PendingView users={pendingUsers} loading={loadingPending} onApprove={approveUser} onRefresh={loadPendingUsers} />
+        )}
+
+        {tab === 'superadmins' && (
+          <SuperadminsView
+            superadmins={superadmins}
+            loading={loadingSuperadmins}
+            onAdd={addSuperadmin}
+            onDelete={deleteSuperadmin}
+            onRefresh={loadSuperadmins}
+          />
         )}
       </main>
 
@@ -699,6 +739,126 @@ function UsersView({ users, loading, onUpdateStatus, onRefresh }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Superadmins view ──────────────────────────────────────────────────────────
+
+function SuperadminsView({ superadmins, loading, onAdd, onDelete, onRefresh }) {
+  const [showForm,  setShowForm]  = useState(false);
+  const [username,  setUsername]  = useState('');
+  const [email,     setEmail]     = useState('');
+  const [password,  setPassword]  = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const submit = async () => {
+    setFormError('');
+    if (!username.trim() || !email.trim() || !password) { setFormError('All fields are required'); return; }
+    if (password.length < 8) { setFormError('Password must be at least 8 characters'); return; }
+    setSaving(true);
+    try {
+      await onAdd(username.trim(), email.trim().toLowerCase(), password);
+      setShowForm(false); setUsername(''); setEmail(''); setPassword('');
+    } catch (err) { setFormError(err.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+        <h2 style={{ fontSize: '1rem', fontWeight: 800, color: 'white' }}>
+          Superadmin Accounts ({superadmins.length})
+        </h2>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={onRefresh} className="btn" style={{ fontSize: '0.75rem', padding: '6px 14px' }}>
+            <RefreshCw size={12} /> Refresh
+          </button>
+          <button onClick={() => { setShowForm(true); setFormError(''); }}
+            className="btn primary" style={{ fontSize: '0.75rem', padding: '6px 14px' }}>
+            <Plus size={12} /> Add Superadmin
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>Loading…</div>
+      ) : (
+        <div className="panel" style={{ overflow: 'hidden', borderRadius: '14px' }}>
+          <table className="workshop-table">
+            <thead>
+              <tr><th>Name</th><th>Email</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {superadmins.map(u => (
+                <tr key={u.id}>
+                  <td style={{ fontWeight: 700, color: 'white' }}>{u.username}</td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{u.email}</td>
+                  <td>
+                    <button
+                      onClick={() => { if (window.confirm(`Remove superadmin "${u.username}"?`)) onDelete(u.id).catch(err => alert(err.message)); }}
+                      style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
+                        color: '#ef4444', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                        fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Trash2 size={11} /> Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Add superadmin modal */}
+      {showForm && (
+        <div onClick={() => setShowForm(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)',
+            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div onClick={e => e.stopPropagation()} className="panel animate-scale-in"
+            style={{ width: '100%', maxWidth: '420px', borderRadius: '20px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ fontWeight: 900, fontSize: '0.95rem', color: 'white' }}>Add Superadmin</h3>
+              <button onClick={() => setShowForm(false)}
+                style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: 'white', padding: '6px', borderRadius: '50%', cursor: 'pointer' }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {[
+                { label: 'Name',     value: username, set: setUsername, type: 'text',     placeholder: 'Full name' },
+                { label: 'Email',    value: email,    set: setEmail,    type: 'email',    placeholder: 'admin@example.com' },
+                { label: 'Password', value: password, set: setPassword, type: 'password', placeholder: 'Min 8 characters' },
+              ].map(({ label, value, set, type, placeholder }) => (
+                <div key={label}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
+                    textTransform: 'uppercase', marginBottom: '6px' }}>{label}</div>
+                  <input type={type} value={value} onChange={e => set(e.target.value)} placeholder={placeholder}
+                    onKeyDown={e => e.key === 'Enter' && submit()}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px',
+                      background: 'rgba(255,255,255,0.05)', color: 'white',
+                      border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
+                      fontSize: '0.9rem', outline: 'none' }} />
+                </div>
+              ))}
+              {formError && (
+                <div style={{ fontSize: '0.75rem', color: '#ef4444', background: 'rgba(239,68,68,0.08)',
+                  border: '1px solid rgba(239,68,68,0.2)', padding: '8px 12px', borderRadius: '8px' }}>
+                  {formError}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                <button onClick={() => setShowForm(false)} className="btn" style={{ flex: 1, padding: '10px' }}>Cancel</button>
+                <button onClick={submit} disabled={saving} className="btn primary" style={{ flex: 2, padding: '10px' }}>
+                  {saving ? 'Creating…' : 'Create Account'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
