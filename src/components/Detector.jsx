@@ -361,6 +361,7 @@ export default function Detector() {
 
             // Upload vehicle frame to server (async), get a stable URL
             const imageUrl = await uploadFrame(rawFrame);
+            console.log('[DETECT]', direction, 'imageUrl:', imageUrl ? imageUrl.slice(0, 60) : 'EMPTY', 'rawFrame:', rawFrame ? rawFrame.slice(0, 30) : 'EMPTY');
 
             // Add to WAITING column with scanning state
             addVehicle({
@@ -410,15 +411,32 @@ export default function Detector() {
                     updateVehicleStatus(existing.id, 'ENTERED', imageUrl);
                     removeVehicle(pendingId);
                   } else {
-                    // New vehicle: promote placeholder from WAITING → ENTERED
-                    updateVehicle(pendingId, {
-                      licensePlate:    plateText,
-                      plateImageUrl:   toAbsUrl(pr.plate_url),
-                      plateStatus:     'found',
-                      pendingDirection: null,
-                      detectionLog:    pr.detection_log || [],
-                    });
-                    updateVehicleStatus(pendingId, 'ENTERED', imageUrl);
+                    // Check if this plate is already inside (duplicate detection)
+                    const alreadyEntered = vehiclesRef.current.find(v =>
+                      v.id !== pendingId &&
+                      !v.pendingDirection &&
+                      v.licensePlate?.toUpperCase() === plateText &&
+                      v.status === 'ENTERED'
+                    );
+                    if (alreadyEntered) {
+                      // Same plate already in workshop — hold in WAITING for manual plate entry
+                      updateVehicle(pendingId, {
+                        licensePlate:  plateText,
+                        plateImageUrl: toAbsUrl(pr.plate_url),
+                        plateStatus:   'duplicate',
+                        detectionLog:  pr.detection_log || [],
+                      });
+                    } else {
+                      // New vehicle: promote placeholder from WAITING → ENTERED
+                      updateVehicle(pendingId, {
+                        licensePlate:    plateText,
+                        plateImageUrl:   toAbsUrl(pr.plate_url),
+                        plateStatus:     'found',
+                        pendingDirection: null,
+                        detectionLog:    pr.detection_log || [],
+                      });
+                      updateVehicleStatus(pendingId, 'ENTERED', imageUrl);
+                    }
                   }
                 } else {
                   // EGRESS: find the matching ENTERED vehicle

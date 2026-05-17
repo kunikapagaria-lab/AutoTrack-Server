@@ -23,7 +23,12 @@ export function ShopProvider({ children }) {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const [vehicles,     setVehicles]     = useState([]);
+  const [vehicles,     setVehicles]     = useState(() => {
+    try {
+      const cached = localStorage.getItem('autotrack_vehicles');
+      return cached ? JSON.parse(cached) : [];
+    } catch { return []; }
+  });
   const [backendError, setBackendError] = useState(null);
 
   // feedSource is a device preference (not a secret) — stays in localStorage
@@ -90,6 +95,7 @@ export function ShopProvider({ children }) {
   // ── apiFetch — adds auth header, auto-refreshes on 401 ───────────────────────
   const doLogout = useCallback(() => {
     clearTokens();
+    localStorage.removeItem('autotrack_vehicles');
     setUser(null);
     setVehicles([]);
   }, []);
@@ -124,26 +130,70 @@ export function ShopProvider({ children }) {
     if (res.status === 401) {
       const refreshToken = getRefreshToken();
       if (!refreshToken) { doLogout(); throw new Error('Session expired'); }
+
+      // Keep network errors separate from auth rejections.
+      // Only doLogout() when the server explicitly rejects the token (4xx);
+      // a network error means the backend is temporarily unreachable — the
+      // session is still valid, so we should NOT log the user out.
+      let refreshRes;
       try {
-        const refreshRes = await fetch(`${API_URL}/refresh`, {
+        refreshRes = await fetch(`${API_URL}/refresh`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ refresh_token: refreshToken }),
         });
-        if (!refreshRes.ok) throw new Error('Refresh failed');
-        const { access_token } = await refreshRes.json();
-        storeTokens(access_token);
-        res = await makeRequest(access_token);
       } catch {
+        throw new Error('Could not reach the server. Please check your connection.');
+      }
+      if (!refreshRes.ok) {
         doLogout();
         throw new Error('Session expired. Please log in again.');
       }
+      const { access_token } = await refreshRes.json();
+      storeTokens(access_token);
+      res = await makeRequest(access_token);
     }
 
     return res;
   }, [doLogout]);
 
   // ── Load vehicles when user logs in ──────────────────────────────────────────
+
+  // Heal states left corrupted when the app is closed mid-scan or when the old
+  // backend bug (exclude_none) prevented null from being written to the DB.
+  // Returns { normalized, patches } — patches maps vehicle id → backend payload.
+  const normalizeVehicles = (raw) => {
+    const normalized = [];
+    const patches    = {};
+
+    for (const v of raw) {
+      const n = { ...v };
+
+      // Scan was running when the app closed; it will never resume.
+      if (n.plateStatus === 'scanning') {
+        n.plateStatus      = 'not_found';
+        patches[n.id]      = { ...patches[n.id], plate_status: 'not_found' };
+      }
+
+      // pendingDirection must stay set ONLY when the vehicle genuinely still
+      // needs manual plate entry (WAITING + not_found or duplicate).
+      // Every other combination means the detection was already resolved but
+      // the DB clear failed — fix it now.
+      const genuinelyPending =
+        n.status === 'WAITING' &&
+        (n.plateStatus === 'not_found' || n.plateStatus === 'duplicate');
+
+      if (n.pendingDirection && !genuinelyPending) {
+        n.pendingDirection = null;
+        patches[n.id]      = { ...patches[n.id], pending_direction: null };
+      }
+
+      normalized.push(n);
+    }
+
+    return { normalized, patches };
+  };
+
   const loadVehicles = useCallback(() => {
     if (!user) { setVehicles([]); return; }
     setBackendError(null);
@@ -152,7 +202,17 @@ export function ShopProvider({ children }) {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         return r.json();
       })
-      .then(data => setVehicles(Array.isArray(data) ? data : []))
+      .then(data => {
+        const { normalized, patches } = normalizeVehicles(Array.isArray(data) ? data : []);
+        setVehicles(normalized);
+        // Write corrections back so they don't reappear on the next load
+        Object.entries(patches).forEach(([id, update]) => {
+          apiFetch(`${API_URL}/vehicles/${id}`, {
+            method: 'PATCH',
+            body:   JSON.stringify(update),
+          }).catch(() => {});
+        });
+      })
       .catch(err => {
         console.error('Failed to load vehicles:', err);
         setBackendError(err.message || 'Could not reach the server. Is the backend running?');
@@ -160,6 +220,20 @@ export function ShopProvider({ children }) {
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadVehicles(); }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cache vehicles in localStorage so the list appears instantly on refresh
+  // with no empty-state flash. Backend fetch overwrites with authoritative data.
+  useEffect(() => {
+    if (user) localStorage.setItem('autotrack_vehicles', JSON.stringify(vehicles));
+  }, [vehicles, user]);
+
+  // Re-sync from backend whenever the browser tab becomes visible again
+  useEffect(() => {
+    if (!user) return;
+    const onVisible = () => { if (!document.hidden) loadVehicles(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [user, loadVehicles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auth ──────────────────────────────────────────────────────────────────────
   const login = async (email, password) => {
@@ -244,6 +318,7 @@ export function ShopProvider({ children }) {
     const historyEntry = imageUrl
       ? { status: newStatus, timestamp, imageUrl }
       : { status: newStatus, timestamp };
+    console.log('[STATUS]', id, '→', newStatus, '| imageUrl:', imageUrl ? imageUrl.slice(0, 60) : 'NONE', '| entry keys:', Object.keys(historyEntry));
     setVehicles(prev => prev.map(v =>
       v.id === id
         ? { ...v, status: newStatus, history: [...(v.history || []), historyEntry], lastUpdate: timestamp }

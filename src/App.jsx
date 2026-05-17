@@ -17,8 +17,15 @@ import './index.css';
 
 function MainApp() {
   const { user, logout, vehicles, feedSource } = useShop();
-  const [view,       setView]       = useState('dashboard'); // 'dashboard', 'board'
-  const [dualCamera, setDualCamera] = useState(false);
+  const [view,       setView_]       = useState(() => localStorage.getItem('autotrack_view') || 'dashboard');
+  const [dualCamera, setDualCamera_] = useState(() => localStorage.getItem('autotrack_dualCam') === 'true');
+
+  const setView = (v) => { localStorage.setItem('autotrack_view', v); setView_(v); };
+  const setDualCamera = (v) => {
+    const next = typeof v === 'function' ? v(dualCamera) : v;
+    localStorage.setItem('autotrack_dualCam', String(next));
+    setDualCamera_(next);
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSettings,        setShowSettings]        = useState(false);
@@ -302,14 +309,20 @@ function MainApp() {
       </header>
 
       <main className="main-content">
-        {view === 'dashboard' ? (
-          <div className="dashboard-grid">
-            <div style={{ marginBottom: '1.5rem' }}>
-              <ErrorBoundary label="Gate Monitor">
-                {dualCamera ? <DualCameraDetector /> : <Detector />}
-              </ErrorBoundary>
-            </div>
+        {/* Detector lives outside any display:none wrapper.
+            position:fixed off-screen on board view keeps the video stream,
+            rAF loop and WebGL inference running continuously. */}
+        <div style={view !== 'dashboard' ? {
+          position: 'fixed', left: '-9999px', top: '-9999px',
+          width: '1px', height: '1px', overflow: 'hidden', pointerEvents: 'none',
+        } : { marginBottom: '1.5rem' }}>
+          <ErrorBoundary label="Gate Monitor">
+            {dualCamera ? <DualCameraDetector /> : <Detector />}
+          </ErrorBoundary>
+        </div>
 
+        <div style={{ display: view === 'dashboard' ? 'block' : 'none' }}>
+          <div className="dashboard-grid">
             {/* Today's Overview */}
             <section>
               <h2 className="table-title" style={{ marginBottom: '1.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Today's Overview</h2>
@@ -437,11 +450,13 @@ function MainApp() {
               </div>
             </section>
           </div>
-        ) : (
+        </div>
+
+        <div style={{ display: view === 'board' ? 'block' : 'none' }}>
           <ErrorBoundary label="Workshop Board">
             <WorkshopBoard searchTerm={searchTerm} />
           </ErrorBoundary>
-        )}
+        </div>
       </main>
 
       {/* First-launch feed setup — can't be dismissed until a source is chosen */}

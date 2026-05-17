@@ -17,7 +17,7 @@ export function useFusionQueue() {
   const recentPlates = useRef(new Map());
 
   // Called by HighCameraDetector when a vehicle crosses the plate zone
-  const addTrigger = useCallback(({ trackId, direction, vehicleId, imageUrl, confidence, vehicleType }) => {
+  const addTrigger = useCallback(({ trackId, direction, vehicleId, imageUrlPromise, confidence, vehicleType }) => {
     const now = Date.now();
 
     // Global cooldown
@@ -31,13 +31,13 @@ export function useFusionQueue() {
 
     lastTriggerAt.current = now;
 
-    // Add vehicle to WAITING immediately so the UI card appears
+    // Add vehicle to WAITING immediately so the UI card appears (imageUrl arrives via promise)
     addVehicle({
       id:               vehicleId,
       status:           'WAITING',
       pendingDirection: direction,
       plateStatus:      'scanning',
-      imageUrl,
+      imageUrl:         null,
       type:             vehicleType || 'Car',
       confidence:       confidence  || 0,
       timestamp:        new Date().toISOString(),
@@ -48,15 +48,16 @@ export function useFusionQueue() {
 
     queue.current.push({
       trackId,
-      triggeredAt: now,
+      triggeredAt:    now,
       direction,
       vehicleId,
-      resolved: false,
+      imageUrlPromise: imageUrlPromise || null,
+      resolved:        false,
     });
   }, [addVehicle]);
 
   // Called by LowCameraFeed when a burst OCR result is ready
-  const submitPlateResult = useCallback(({ plateText, confidence, plateImageUrl, burstStartTime, detectionLog }) => {
+  const submitPlateResult = useCallback(async ({ plateText, confidence, plateImageUrl, burstStartTime, detectionLog }) => {
     const unresolved = queue.current.filter(t => !t.resolved);
     if (unresolved.length === 0) return;
 
@@ -70,11 +71,9 @@ export function useFusionQueue() {
     if (!best) return;
 
     best.resolved = true;
-    const { vehicleId, direction } = best;
-    // imageUrl is uploaded async after the trigger fires — read it from the
-    // vehicle record now (it will have been set by updateVehicle by this point)
-    const pendingVehicle = vehiclesRef.current.find(v => v.id === vehicleId);
-    const triggerImageUrl = pendingVehicle?.imageUrl || null;
+    const { vehicleId, direction, imageUrlPromise } = best;
+    // Await the upload that started at trigger time — OCR always takes longer so this is resolved
+    const triggerImageUrl = imageUrlPromise ? (await imageUrlPromise) : null;
 
     // No plate found — leave in WAITING for manual entry
     if (!plateText) {
@@ -104,15 +103,32 @@ export function useFusionQueue() {
         updateVehicleStatus(existing.id, 'ENTERED', triggerImageUrl);
         removeVehicle(vehicleId);
       } else {
-        updateVehicle(vehicleId, {
-          licensePlate:     upper,
-          plateImageUrl,
-          plateStatus:      'found',
-          pendingDirection: null,
-          confidence,
-          detectionLog:     detectionLog || [],
-        });
-        updateVehicleStatus(vehicleId, 'ENTERED', triggerImageUrl);
+        // Check if this plate is already inside (duplicate detection)
+        const alreadyEntered = vehiclesRef.current.find(v =>
+          v.id !== vehicleId &&
+          !v.pendingDirection &&
+          v.licensePlate?.toUpperCase() === upper &&
+          v.status === 'ENTERED'
+        );
+        if (alreadyEntered) {
+          // Same plate already in workshop — hold in WAITING for manual plate entry
+          updateVehicle(vehicleId, {
+            licensePlate:  upper,
+            plateImageUrl,
+            plateStatus:   'duplicate',
+            detectionLog:  detectionLog || [],
+          });
+        } else {
+          updateVehicle(vehicleId, {
+            licensePlate:     upper,
+            plateImageUrl,
+            plateStatus:      'found',
+            pendingDirection: null,
+            confidence,
+            detectionLog:     detectionLog || [],
+          });
+          updateVehicleStatus(vehicleId, 'ENTERED', triggerImageUrl);
+        }
       }
     } else {
       const entered = vehiclesRef.current.find(v =>

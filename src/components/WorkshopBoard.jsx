@@ -592,11 +592,15 @@ export default function WorkshopBoard({ searchTerm = '', readOnly = false, vehic
             {/* header */}
             <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <AlertCircle size={18} color={resolvingVehicle.pendingDirection === 'INGRESS' ? '#10b981' : '#a855f7'} />
+                <AlertCircle size={18} color={resolvingVehicle.plateStatus === 'duplicate' ? '#f59e0b' : resolvingVehicle.pendingDirection === 'INGRESS' ? '#10b981' : '#a855f7'} />
                 <div>
-                  <h3 style={{ fontSize: '0.95rem', fontWeight: '900', color: 'white' }}>Plate Not Detected</h3>
-                  <div style={{ fontSize: '0.7rem', fontWeight: 800, marginTop: '2px', color: resolvingVehicle.pendingDirection === 'INGRESS' ? '#10b981' : '#a855f7' }}>
-                    {resolvingVehicle.pendingDirection === 'INGRESS' ? '▼ ENTRY' : '▲ EXIT'} — Manual Input Required
+                  <h3 style={{ fontSize: '0.95rem', fontWeight: '900', color: 'white' }}>
+                    {resolvingVehicle.plateStatus === 'duplicate' ? 'Duplicate Plate Detected' : 'Plate Not Detected'}
+                  </h3>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 800, marginTop: '2px', color: resolvingVehicle.plateStatus === 'duplicate' ? '#f59e0b' : resolvingVehicle.pendingDirection === 'INGRESS' ? '#10b981' : '#a855f7' }}>
+                    {resolvingVehicle.plateStatus === 'duplicate'
+                      ? `▼ ENTRY — ${resolvingVehicle.licensePlate} already in workshop. Enter correct plate.`
+                      : `${resolvingVehicle.pendingDirection === 'INGRESS' ? '▼ ENTRY' : '▲ EXIT'} — Manual Input Required`}
                   </div>
                 </div>
               </div>

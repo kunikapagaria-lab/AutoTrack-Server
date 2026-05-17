@@ -1231,7 +1231,7 @@ def update_vehicle(
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Vehicle not found")
-    update_data = updates.dict(exclude_none=True)
+    update_data = updates.dict(exclude_unset=True)
     if "license_plate" in update_data and update_data["license_plate"]:
         update_data["license_plate"] = sanitize_plate(update_data["license_plate"])
     for field, val in update_data.items():

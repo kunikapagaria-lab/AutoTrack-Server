@@ -307,24 +307,25 @@ export default function HighCameraDetector({ onTrigger }) {
             const vehicleId   = `VEH-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
             const triggeredAt = Date.now();
 
+            // Capture frame synchronously NOW (vehicle is in frame), start upload immediately
+            let rawFrame = '';
+            try { rawFrame = captureFrame(source, isRTSP); } catch {}
+            // imageUrlPromise resolves to the uploaded URL; also updates the vehicle card
+            const imageUrlPromise = uploadFrame(rawFrame).then(url => {
+              if (url) updateVehicle(vehicleId, { imageUrl: url }, true);
+              return url;
+            });
+
             // Fire trigger IMMEDIATELY so low cam burst starts while vehicle is still in frame
             onTrigger({
               trackId: t.id,
               direction,
               vehicleId,
-              imageUrl:    null,
+              imageUrlPromise,
               confidence:  car.score,
               vehicleType: car.label,
               triggeredAt,
             });
-
-            // Upload frame in background then update the vehicle card image
-            (async () => {
-              let rawFrame = '';
-              try { rawFrame = captureFrame(source, isRTSP); } catch {}
-              const imageUrl = await uploadFrame(rawFrame);
-              if (imageUrl) updateVehicle(vehicleId, { imageUrl }, true);
-            })();
           }
 
           // ── draw bounding box ──
