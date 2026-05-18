@@ -260,7 +260,7 @@ export default function Detector() {
       busy = true;
       try {
         const ready = isRTSP
-          ? (source.complete && source.naturalWidth > 0)
+          ? (source.naturalWidth > 0 && source.naturalHeight > 0)
           : (source.readyState >= 2 && source.videoWidth > 0);
         if (!ready) { busy = false; if (isMonitoring) requestRef.current = requestAnimationFrame(tick); return; }
 
