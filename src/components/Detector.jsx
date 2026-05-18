@@ -278,7 +278,7 @@ export default function Detector() {
           offscreenRef.current.getContext('2d').drawImage(source, 0, 0);
           detectTarget = offscreenRef.current;
         }
-        const preds = await model.detect(detectTarget, 30, 0.30);
+        const preds = await model.detect(detectTarget, 30, 0.40);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         drawLine(line1Ref.current, '#10b981', 'L1', '▼  LINE 1 — ENTERING');
