@@ -81,12 +81,13 @@ let _tid = 1;
 // ─── component ──────────────────────────────────────────────────────────────
 
 export default function Detector() {
-  const videoRef     = useRef(null);
-  const canvasRef    = useRef(null);
-  const imageRef     = useRef(null);
-  const fileInputRef = useRef(null);
-  const streamRef    = useRef(null);
-  const requestRef   = useRef(null);
+  const videoRef      = useRef(null);
+  const canvasRef     = useRef(null);
+  const imageRef      = useRef(null);
+  const fileInputRef  = useRef(null);
+  const streamRef     = useRef(null);
+  const requestRef    = useRef(null);
+  const offscreenRef  = useRef(null); // reusable canvas for RTSP frame snapshots
 
   const trackersRef = useRef([]);
 
@@ -267,7 +268,17 @@ export default function Detector() {
         canvas.width  = isRTSP ? source.naturalWidth  : source.videoWidth;
         canvas.height = isRTSP ? source.naturalHeight : source.videoHeight;
 
-        const preds = await model.detect(source, 30, 0.40);
+        // For RTSP the source is a live MJPEG <img>. WebGL can't reliably read
+        // pixel data from a streaming image, so snapshot it to a canvas first.
+        let detectTarget = source;
+        if (isRTSP) {
+          if (!offscreenRef.current) offscreenRef.current = document.createElement('canvas');
+          offscreenRef.current.width  = source.naturalWidth;
+          offscreenRef.current.height = source.naturalHeight;
+          offscreenRef.current.getContext('2d').drawImage(source, 0, 0);
+          detectTarget = offscreenRef.current;
+        }
+        const preds = await model.detect(detectTarget, 30, 0.30);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         drawLine(line1Ref.current, '#10b981', 'L1', '▼  LINE 1 — ENTERING');

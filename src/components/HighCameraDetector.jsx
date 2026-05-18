@@ -57,6 +57,7 @@ export default function HighCameraDetector({ onTrigger }) {
   const fileInputRef = useRef(null);
   const streamRef    = useRef(null);
   const requestRef   = useRef(null);
+  const offscreenRef = useRef(null);
   const trackersRef  = useRef([]);
 
   // Three draggable lines: L1 (entry), Plate Zone, L2 (exit)
@@ -230,7 +231,15 @@ export default function HighCameraDetector({ onTrigger }) {
         canvas.width  = isRTSP ? source.naturalWidth  : source.videoWidth;
         canvas.height = isRTSP ? source.naturalHeight : source.videoHeight;
 
-        const preds = await model.detect(source, 30, 0.40);
+        let detectTarget = source;
+        if (isRTSP) {
+          if (!offscreenRef.current) offscreenRef.current = document.createElement('canvas');
+          offscreenRef.current.width  = source.naturalWidth;
+          offscreenRef.current.height = source.naturalHeight;
+          offscreenRef.current.getContext('2d').drawImage(source, 0, 0);
+          detectTarget = offscreenRef.current;
+        }
+        const preds = await model.detect(detectTarget, 30, 0.30);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         drawLine(line1Ref.current,     '#10b981', 'L1', '▼  LINE 1 — ENTERING');
