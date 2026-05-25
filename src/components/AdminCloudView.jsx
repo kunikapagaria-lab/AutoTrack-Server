@@ -1043,13 +1043,14 @@ function ActivityLogView({ logs, loading, onRefresh }) {
         <div className="panel" style={{ overflow: 'hidden', borderRadius: '14px' }}>
           <table className="workshop-table">
             <thead>
-              <tr><th>User</th><th>Email</th><th>Action</th><th>Timestamp</th><th>IP Address</th></tr>
+              <tr><th>User</th><th>Email</th><th>Branch</th><th>Action</th><th>Timestamp</th><th>IP Address</th></tr>
             </thead>
             <tbody>
               {logs.map(entry => (
                 <tr key={entry.id}>
                   <td style={{ fontWeight: 700, color: 'white' }}>{entry.username || '—'}</td>
                   <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{entry.email}</td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{entry.branchName || '—'}</td>
                   <td>
                     <span style={{
                       display: 'inline-flex', alignItems: 'center', gap: '5px',

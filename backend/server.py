@@ -1023,6 +1023,13 @@ def login(request: Request, user_data: UserLogin):
     if status == 'inactive':
         raise HTTPException(status_code=403, detail="Your account has been deactivated. Contact your administrator.")
     record_auth_event(email, username, 'login', request.client.host if request.client else None)
+    enqueue_user_sync('auth_log', 0, {
+        'email':     email,
+        'username':  username,
+        'action':    'login',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'ip':        request.client.host if request.client else None,
+    })
     return {
         "access_token":  create_access_token(email, role),
         "refresh_token": create_refresh_token(email),
@@ -1068,6 +1075,13 @@ def logout(request: Request, current_user: dict = Depends(get_current_user)):
     conn.close()
     username = row[0] if row else None
     record_auth_event(current_user["sub"], username, 'logout', request.client.host if request.client else None)
+    enqueue_user_sync('auth_log', 0, {
+        'email':     current_user['sub'],
+        'username':  username,
+        'action':    'logout',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'ip':        request.client.host if request.client else None,
+    })
     return {"ok": True}
 
 

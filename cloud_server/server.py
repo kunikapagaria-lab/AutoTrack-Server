@@ -256,7 +256,6 @@ async def login(data: UserLogin):
     if not row or not pwd_ctx.verify(data.password, row[2]):
         raise HTTPException(status_code=400, detail='Invalid email or password')
     username, email, _, role = row
-    record_auth_event(email, username, 'login')
     return {
         'access_token':  create_access_token(email),
         'refresh_token': create_refresh_token(email),
@@ -278,30 +277,22 @@ async def refresh(payload: RefreshRequest):
         raise HTTPException(status_code=401, detail='User not found')
     return {'access_token': create_access_token(data.get('sub')), 'token_type': 'bearer'}
 
-@app.post('/logout')
-async def logout(current_user: dict = Depends(get_current_user)):
-    conn = sqlite3.connect(DB_PATH)
-    c    = conn.cursor()
-    c.execute('SELECT username FROM users WHERE email = ?', (current_user['sub'],))
-    row = c.fetchone()
-    conn.close()
-    record_auth_event(current_user['sub'], row[0] if row else None, 'logout')
-    return {'ok': True}
-
-
 @app.get('/admin/auth-logs')
 async def get_auth_logs(limit: int = 200, _: dict = Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)
     c    = conn.cursor()
     c.execute(
-        'SELECT id, email, username, action, timestamp, ip_address, branch_id FROM auth_log ORDER BY id DESC LIMIT ?',
+        '''SELECT a.id, a.email, a.username, a.action, a.timestamp, a.ip_address, b.name
+           FROM auth_log a
+           LEFT JOIN branches b ON a.branch_id = b.id
+           ORDER BY a.id DESC LIMIT ?''',
         (min(limit, 500),),
     )
     rows = c.fetchall()
     conn.close()
     return [
         {'id': r[0], 'email': r[1], 'username': r[2], 'action': r[3],
-         'timestamp': r[4], 'ip': r[5], 'branch_id': r[6]}
+         'timestamp': r[4], 'ip': r[5], 'branchName': r[6]}
         for r in rows
     ]
 
@@ -408,19 +399,27 @@ async def sync_users(payload: UserSyncPayload, branch_id: str = Depends(verify_b
     c         = conn.cursor()
     synced_at = datetime.now(timezone.utc).isoformat()
     for event in payload.users:
-        p        = event.payload
-        local_id = p.get('local_user_id', event.user_id)
-        c.execute('''
-            INSERT INTO branch_users (local_user_id, branch_id, username, email, role, status, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(local_user_id, branch_id) DO UPDATE SET
-                username=excluded.username, email=excluded.email,
-                role=excluded.role, status=excluded.status, synced_at=excluded.synced_at
-        ''', (
-            local_id, branch_id,
-            p.get('username', ''), p.get('email', ''),
-            p.get('role', 'staff'), p.get('status', 'active'), synced_at
-        ))
+        p = event.payload
+        if event.event_type == 'auth_log':
+            c.execute(
+                'INSERT INTO auth_log (email, username, action, timestamp, ip_address, branch_id) VALUES (?,?,?,?,?,?)',
+                (p.get('email'), p.get('username'), p.get('action'),
+                 p.get('timestamp', datetime.now(timezone.utc).isoformat()),
+                 p.get('ip'), branch_id)
+            )
+        else:
+            local_id = p.get('local_user_id', event.user_id)
+            c.execute('''
+                INSERT INTO branch_users (local_user_id, branch_id, username, email, role, status, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(local_user_id, branch_id) DO UPDATE SET
+                    username=excluded.username, email=excluded.email,
+                    role=excluded.role, status=excluded.status, synced_at=excluded.synced_at
+            ''', (
+                local_id, branch_id,
+                p.get('username', ''), p.get('email', ''),
+                p.get('role', 'staff'), p.get('status', 'active'), synced_at
+            ))
     conn.commit()
     conn.close()
     return {'ok': True, 'synced': len(payload.users)}
