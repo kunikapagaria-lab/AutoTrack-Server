@@ -83,8 +83,31 @@ def init_db():
         attempts INTEGER NOT NULL DEFAULT 0,
         executed_at TEXT
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS auth_log (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        email      TEXT NOT NULL,
+        username   TEXT,
+        action     TEXT NOT NULL,
+        timestamp  TEXT NOT NULL,
+        ip_address TEXT,
+        branch_id  TEXT
+    )''')
     conn.commit()
     conn.close()
+
+
+def record_auth_event(email: str, username: str, action: str, ip: str = None, branch_id: str = None):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c    = conn.cursor()
+        c.execute(
+            'INSERT INTO auth_log (email, username, action, timestamp, ip_address, branch_id) VALUES (?,?,?,?,?,?)',
+            (email, username, action, datetime.now(timezone.utc).isoformat(), ip, branch_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 init_db()
 
@@ -233,6 +256,7 @@ async def login(data: UserLogin):
     if not row or not pwd_ctx.verify(data.password, row[2]):
         raise HTTPException(status_code=400, detail='Invalid email or password')
     username, email, _, role = row
+    record_auth_event(email, username, 'login')
     return {
         'access_token':  create_access_token(email),
         'refresh_token': create_refresh_token(email),
@@ -253,6 +277,34 @@ async def refresh(payload: RefreshRequest):
     if not row:
         raise HTTPException(status_code=401, detail='User not found')
     return {'access_token': create_access_token(data.get('sub')), 'token_type': 'bearer'}
+
+@app.post('/logout')
+async def logout(current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT username FROM users WHERE email = ?', (current_user['sub'],))
+    row = c.fetchone()
+    conn.close()
+    record_auth_event(current_user['sub'], row[0] if row else None, 'logout')
+    return {'ok': True}
+
+
+@app.get('/admin/auth-logs')
+async def get_auth_logs(limit: int = 200, _: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute(
+        'SELECT id, email, username, action, timestamp, ip_address, branch_id FROM auth_log ORDER BY id DESC LIMIT ?',
+        (min(limit, 500),),
+    )
+    rows = c.fetchall()
+    conn.close()
+    return [
+        {'id': r[0], 'email': r[1], 'username': r[2], 'action': r[3],
+         'timestamp': r[4], 'ip': r[5], 'branch_id': r[6]}
+        for r in rows
+    ]
+
 
 # ── Branch management ──────────────────────────────────────────────────────────
 
