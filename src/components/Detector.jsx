@@ -91,8 +91,10 @@ export default function Detector() {
 
   const trackersRef = useRef([]);
 
-  const line1Ref = useRef({ left: 0.35, right: 0.35 });
-  const line2Ref = useRef({ left: 0.65, right: 0.65 });
+  const _savedLine1 = (() => { try { return JSON.parse(localStorage.getItem('autotrack_line1')); } catch { return null; } })();
+  const _savedLine2 = (() => { try { return JSON.parse(localStorage.getItem('autotrack_line2')); } catch { return null; } })();
+  const line1Ref = useRef(_savedLine1 || { left: 0.35, right: 0.35 });
+  const line2Ref = useRef(_savedLine2 || { left: 0.65, right: 0.65 });
   const dragging = useRef(null);
   const dragPart = useRef(null);
 
@@ -105,7 +107,7 @@ export default function Detector() {
 
   const {
     addVehicle, vehicles, updateVehicle, updateVehicleStatus, removeVehicle,
-    feedSource,
+    feedSource, linesLocked,
   } = useShop();
 
   const vehiclesRef = useRef(vehicles);
@@ -149,6 +151,7 @@ export default function Detector() {
   }
 
   function onMouseDown(e) {
+    if (linesLocked) return;
     const c = canvasRef.current; if (!c) return;
     const [x, y] = toCanvasCoords(e);
     const l1Y = getLineYAtX(line1Ref.current, x, c.width, c.height);
@@ -166,6 +169,7 @@ export default function Detector() {
   }
 
   function onMouseMove(e) {
+    if (linesLocked) return;
     const c = canvasRef.current; if (!c) return;
     const [x, y] = toCanvasCoords(e);
     if (dragging.current) {
@@ -187,7 +191,12 @@ export default function Detector() {
       c.style.cursor = (Math.abs(y - l1Y) < 35 || Math.abs(y - l2Y) < 35) ? 'pointer' : 'default';
     }
   }
-  function onMouseUp() { dragging.current = null; }
+  function onMouseUp() {
+    dragging.current = null;
+    // Persist line positions whenever user finishes dragging
+    localStorage.setItem('autotrack_line1', JSON.stringify(line1Ref.current));
+    localStorage.setItem('autotrack_line2', JSON.stringify(line2Ref.current));
+  }
 
   // ── source controls ──
   function handleFileChange(e) {
@@ -281,8 +290,10 @@ export default function Detector() {
         const preds = await model.detect(detectTarget, 30, 0.40);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        drawLine(line1Ref.current, '#10b981', 'L1', '▼  LINE 1 — ENTERING');
-        drawLine(line2Ref.current, '#f5a623', 'L2', '▲  LINE 2 — EXITING');
+        if (!linesLocked) {
+          drawLine(line1Ref.current, '#10b981', 'L1', '▼  LINE 1 — ENTERING');
+          drawLine(line2Ref.current, '#f5a623', 'L2', '▲  LINE 2 — EXITING');
+        }
 
         const cars = preds
           .filter(p => p.class !== 'person')

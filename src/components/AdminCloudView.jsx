@@ -1,8 +1,15 @@
 import { useState, useEffect } from 'react';
 import {
   Building2, Plus, RefreshCw, X, Copy, CheckCircle,
-  Users, Clock, Download, Trash2, UserCheck, UserX, AlertCircle,
+  Users, Clock, Download, Trash2, UserCheck, UserX, AlertCircle, LogIn, LogOut, ImageOff,
 } from 'lucide-react';
+
+// Resolve a stored image URL — relative /uploads/... paths are served from the local API
+function toImgUrl(url) {
+  if (!url) return null;
+  if (url.startsWith('http') || url.startsWith('data:')) return url;
+  return `${API_URL}${url}`;
+}
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -87,6 +94,10 @@ export default function AdminCloudView({ onLogout }) {
   const [superadmins,        setSuperadmins]        = useState([]);
   const [loadingSuperadmins, setLoadingSuperadmins] = useState(false);
 
+  // Activity log tab
+  const [authLogs,        setAuthLogs]        = useState([]);
+  const [loadingAuthLogs, setLoadingAuthLogs] = useState(false);
+
   // ── Data fetchers ───────────────────────────────────────────────────────────
 
   const fetchPendingCount = () => {
@@ -136,11 +147,21 @@ export default function AdminCloudView({ onLogout }) {
       .finally(() => setLoadingSuperadmins(false));
   };
 
+  const loadAuthLogs = () => {
+    setLoadingAuthLogs(true);
+    authFetch(`${API_URL}/admin/auth-logs`)
+      .then(r => r.json())
+      .then(data => setAuthLogs(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => setLoadingAuthLogs(false));
+  };
+
   useEffect(() => { loadBranches(); fetchPendingCount(); }, []);
   useEffect(() => {
     if (tab === 'users')        loadAllUsers();
     if (tab === 'pending')      loadPendingUsers();
     if (tab === 'superadmins')  loadSuperadmins();
+    if (tab === 'activity')     loadAuthLogs();
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Branch actions ──────────────────────────────────────────────────────────
@@ -281,6 +302,7 @@ export default function AdminCloudView({ onLogout }) {
             { id: 'users',       label: 'All Users' },
             { id: 'pending',     label: 'Pending Approvals', badge: pendingCount },
             { id: 'superadmins', label: 'Superadmins' },
+            { id: 'activity',    label: 'Activity Log' },
           ].map(({ id, label, badge }) => (
             <button key={id} onClick={() => setTab(id)} className={`nav-item ${tab === id ? 'active' : ''}`}
               style={{ position: 'relative' }}>
@@ -357,6 +379,10 @@ export default function AdminCloudView({ onLogout }) {
             onDelete={deleteSuperadmin}
             onRefresh={loadSuperadmins}
           />
+        )}
+
+        {tab === 'activity' && (
+          <ActivityLogView logs={authLogs} loading={loadingAuthLogs} onRefresh={loadAuthLogs} />
         )}
       </main>
 
@@ -536,6 +562,7 @@ function BranchListView({ branches, loading, showRegister, setShowRegister, newB
 function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, loading,
   onBack, onRefresh, onUpdateVehicleStatus, onDeleteVehicle, onUpdateUserStatus }) {
   const STATUSES = ['WAITING', 'ENTERED', 'TEMP_OUT', 'EXITED'];
+  const [previewVehicle, setPreviewVehicle] = useState(null);
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
@@ -576,12 +603,36 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
             <table className="workshop-table">
               <thead>
                 <tr>
+                  <th style={{ width: '60px' }}>Photo</th>
                   <th>License Plate</th><th>Vehicle ID</th><th>Entry Time</th><th>Status</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {vehicles.map(v => (
+                {vehicles.map(v => {
+                  const imgUrl = toImgUrl(v.imageUrl);
+                  return (
                   <tr key={v.id}>
+                    <td>
+                      {imgUrl ? (
+                        <img
+                          src={imgUrl}
+                          alt="vehicle"
+                          onClick={() => setPreviewVehicle(v)}
+                          style={{ width: '52px', height: '38px', objectFit: 'cover', borderRadius: '6px',
+                            cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)',
+                            transition: 'transform 0.15s', display: 'block' }}
+                          onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.08)'}
+                          onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+                          onError={e => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'flex'; }}
+                        />
+                      ) : null}
+                      <div style={{ display: imgUrl ? 'none' : 'flex', width: '52px', height: '38px',
+                        borderRadius: '6px', background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        alignItems: 'center', justifyContent: 'center' }}>
+                        <ImageOff size={14} color="rgba(255,255,255,0.2)" />
+                      </div>
+                    </td>
                     <td style={{ fontWeight: 800, letterSpacing: '0.05em' }}>{v.licensePlate || 'PENDING'}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{v.id}</td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
@@ -606,11 +657,106 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )
+      )}
+
+      {/* Vehicle image preview modal */}
+      {previewVehicle && (
+        <div
+          onClick={() => setPreviewVehicle(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)',
+            backdropFilter: 'blur(10px)', zIndex: 2000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="panel animate-scale-in"
+            style={{ width: '100%', maxWidth: '680px', borderRadius: '20px',
+              overflow: 'hidden', border: '1px solid var(--border-color)' }}
+          >
+            {/* Header */}
+            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-color)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: '1rem', color: 'white' }}>
+                  {previewVehicle.licensePlate || 'PENDING'}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  {previewVehicle.id} · {previewVehicle.status}
+                </div>
+              </div>
+              <button onClick={() => setPreviewVehicle(null)}
+                style={{ background: 'rgba(255,255,255,0.06)', border: 'none', color: 'white',
+                  padding: '7px', borderRadius: '50%', cursor: 'pointer', display: 'flex' }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Images */}
+            <div style={{ padding: '1.25rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              {toImgUrl(previewVehicle.imageUrl) && (
+                <div style={{ flex: '1 1 300px' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
+                    Vehicle Photo
+                  </div>
+                  <img
+                    src={toImgUrl(previewVehicle.imageUrl)}
+                    alt="vehicle"
+                    style={{ width: '100%', borderRadius: '10px', objectFit: 'cover',
+                      border: '1px solid rgba(255,255,255,0.08)', maxHeight: '280px' }}
+                    onError={e => { e.currentTarget.style.display = 'none'; }}
+                  />
+                </div>
+              )}
+              {toImgUrl(previewVehicle.plateImageUrl) && (
+                <div style={{ flex: '0 0 auto', minWidth: '160px' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
+                    License Plate
+                  </div>
+                  <img
+                    src={toImgUrl(previewVehicle.plateImageUrl)}
+                    alt="plate"
+                    style={{ width: '100%', borderRadius: '10px', objectFit: 'contain',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: '#000', maxHeight: '100px' }}
+                    onError={e => { e.currentTarget.style.display = 'none'; }}
+                  />
+                  {previewVehicle.licensePlate && (
+                    <div style={{ marginTop: '8px', textAlign: 'center', fontSize: '1rem',
+                      fontWeight: 900, letterSpacing: '0.15em', color: 'white',
+                      background: 'rgba(255,255,255,0.06)', padding: '6px 12px',
+                      borderRadius: '6px', fontFamily: 'monospace' }}>
+                      {previewVehicle.licensePlate}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!toImgUrl(previewVehicle.imageUrl) && !toImgUrl(previewVehicle.plateImageUrl) && (
+                <div style={{ flex: 1, padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                  <ImageOff size={32} style={{ margin: '0 auto 1rem', display: 'block', opacity: 0.3 }} />
+                  No images available for this vehicle.
+                </div>
+              )}
+            </div>
+
+            {/* Entry time footer */}
+            <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--border-color)',
+              fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'flex', gap: '1.5rem' }}>
+              <span>Entry: {previewVehicle.timestamp
+                ? new Date(previewVehicle.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : '—'}</span>
+              {previewVehicle.direction && <span>Direction: {previewVehicle.direction}</span>}
+              {previewVehicle.confidence && <span>Confidence: {Math.round(parseFloat(previewVehicle.confidence) * 100)}%</span>}
+            </div>
+          </div>
+        </div>
       )}
 
       {detailTab === 'users' && (
@@ -866,6 +1012,66 @@ function SuperadminsView({ superadmins, loading, onAdd, onDelete, onRefresh }) {
 }
 
 // ── Pending approvals view ────────────────────────────────────────────────────
+
+// ── Activity log view ─────────────────────────────────────────────────────────
+
+function ActivityLogView({ logs, loading, onRefresh }) {
+  const fmt = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+        <h2 style={{ fontSize: '1rem', fontWeight: 800, color: 'white' }}>
+          Activity Log ({logs.length})
+        </h2>
+        <button onClick={onRefresh} className="btn" style={{ fontSize: '0.75rem', padding: '6px 14px' }}>
+          <RefreshCw size={12} /> Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>Loading…</div>
+      ) : logs.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+          No activity recorded yet.
+        </div>
+      ) : (
+        <div className="panel" style={{ overflow: 'hidden', borderRadius: '14px' }}>
+          <table className="workshop-table">
+            <thead>
+              <tr><th>User</th><th>Email</th><th>Action</th><th>Timestamp</th><th>IP Address</th></tr>
+            </thead>
+            <tbody>
+              {logs.map(entry => (
+                <tr key={entry.id}>
+                  <td style={{ fontWeight: 700, color: 'white' }}>{entry.username || '—'}</td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{entry.email}</td>
+                  <td>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '5px',
+                      padding: '3px 10px', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: 700,
+                      background: entry.action === 'login' ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                      color: entry.action === 'login' ? '#10b981' : '#ef4444',
+                    }}>
+                      {entry.action === 'login' ? <LogIn size={10} /> : <LogOut size={10} />}
+                      {entry.action.toUpperCase()}
+                    </span>
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{fmt(entry.timestamp)}</td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontFamily: 'monospace' }}>{entry.ip || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PendingView({ users, loading, onApprove, onRefresh }) {
   return (

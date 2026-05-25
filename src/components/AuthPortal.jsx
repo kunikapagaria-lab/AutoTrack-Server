@@ -12,7 +12,7 @@ export default function AuthPortal() {
   const [pendingMessage, setPendingMessage] = useState(null);
   const [formData, setFormData] = useState({
     username: '',
-    email: '',
+    email: localStorage.getItem('autotrack_last_email') || '',
     password: '',
     role: 'staff'
   });

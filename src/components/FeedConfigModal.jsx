@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { PlayCircle, RefreshCw, Upload, Wifi, X, CheckCircle, Camera } from 'lucide-react';
+import { PlayCircle, RefreshCw, Upload, Wifi, X, CheckCircle, Camera, Lock, Unlock } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -105,7 +105,7 @@ function SourcePicker({ label, accentColor, selected, onSelect, isAdmin, rtspInp
 }
 
 export default function FeedConfigModal({ isOpen, onClose }) {
-  const { user, feedSource, setFeedConfig, saveRtspConfig, feedSource2, setFeedConfig2, saveRtspConfigLow } = useShop();
+  const { user, feedSource, setFeedConfig, saveRtspConfig, feedSource2, setFeedConfig2, saveRtspConfigLow, linesLocked, setLinesLocked } = useShop();
   const isAdmin = user?.role === 'admin';
 
   const [sel1,    setSel1]    = useState(feedSource  || 'rtsp');
@@ -228,6 +228,33 @@ export default function FeedConfigModal({ isOpen, onClose }) {
           maskedUrl={masked2}
           saveError={err2}
         />
+
+        {/* Detection lines lock — visible to all users (not just admin) */}
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginBottom: '1.25rem', paddingTop: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Lock size={14} color="var(--accent-color)" />
+            <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-color)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Detection Lines
+            </span>
+          </div>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0 0 12px 0', lineHeight: 1.5 }}>
+            {linesLocked
+              ? 'Lines are fixed and hidden. Detections still use the saved positions.'
+              : 'Lines are visible and draggable on the camera feed. Lock them once calibration is done.'}
+          </p>
+          <button
+            onClick={() => setLinesLocked(!linesLocked)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '9px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: linesLocked ? 'rgba(16,185,129,0.12)' : 'rgba(245,166,35,0.12)',
+              color: linesLocked ? '#10b981' : '#f5a623',
+              fontWeight: 700, fontSize: '0.82rem', transition: 'all 0.15s',
+            }}
+          >
+            {linesLocked ? <><Unlock size={14} /> Unlock Lines</> : <><Lock size={14} /> Lock &amp; Hide Lines</>}
+          </button>
+        </div>
 
         <div style={{ display: 'flex', gap: 10 }}>
           <button

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 
 const ShopContext = createContext();
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -23,6 +23,10 @@ export function ShopProvider({ children }) {
     return saved ? JSON.parse(saved) : null;
   });
 
+  // true while we are validating the stored session on startup
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const sessionCheckDone = useRef(false);
+
   const [vehicles,     setVehicles]     = useState(() => {
     try {
       const cached = localStorage.getItem('autotrack_vehicles');
@@ -35,6 +39,15 @@ export function ShopProvider({ children }) {
   const [feedSource, setFeedSource_] = useState(
     () => localStorage.getItem('autotrack_feedSource') || 'rtsp'
   );
+
+  // Detection lines lock — when true, lines are invisible and not draggable
+  const [linesLocked, setLinesLocked_] = useState(
+    () => localStorage.getItem('autotrack_lines_locked') === 'true'
+  );
+  const setLinesLocked = (val) => {
+    localStorage.setItem('autotrack_lines_locked', String(val));
+    setLinesLocked_(val);
+  };
 
   const setFeedConfig = (source) => {
     localStorage.setItem('autotrack_feedSource', source);
@@ -92,8 +105,53 @@ export function ShopProvider({ children }) {
     else       localStorage.removeItem('autosense_user');
   }, [user]);
 
+  // ── Startup session validation — silently refresh access token on load ────────
+  useEffect(() => {
+    if (sessionCheckDone.current) return;
+    sessionCheckDone.current = true;
+
+    const storedUser    = localStorage.getItem('autosense_user');
+    const refreshToken  = getRefreshToken();
+
+    if (!storedUser || !refreshToken) {
+      setSessionChecked(true);
+      return;
+    }
+
+    // Try to get a fresh access token. Failure due to network → keep session.
+    // Failure due to server rejection (4xx) → clear session (tokens truly expired).
+    fetch(`${API_URL}/refresh`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ refresh_token: refreshToken }),
+    })
+      .then(res => {
+        if (res.ok) {
+          return res.json().then(data => storeTokens(data.access_token));
+        }
+        if (res.status >= 400 && res.status < 500) {
+          clearTokens();
+          localStorage.removeItem('autosense_user');
+          setUser(null);
+        }
+        // 5xx / network handled in catch — keep session
+      })
+      .catch(() => { /* network unreachable — keep user logged in */ })
+      .finally(() => setSessionChecked(true));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── apiFetch — adds auth header, auto-refreshes on 401 ───────────────────────
-  const doLogout = useCallback(() => {
+  const doLogout = useCallback((recordEvent = false) => {
+    if (recordEvent) {
+      // Fire-and-forget — don't wait, don't block UI
+      const token = getAccessToken();
+      if (token) {
+        fetch(`${API_URL}/logout`, {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+    }
     clearTokens();
     localStorage.removeItem('autotrack_vehicles');
     setUser(null);
@@ -249,6 +307,7 @@ export function ShopProvider({ children }) {
       }
       const { access_token, refresh_token, user: userData } = await res.json();
       storeTokens(access_token, refresh_token);
+      localStorage.setItem('autotrack_last_email', email.toLowerCase().trim());
       setUser(userData);
       return true;
     } catch (err) {
@@ -280,7 +339,7 @@ export function ShopProvider({ children }) {
     }
   };
 
-  const logout = () => doLogout();
+  const logout = () => doLogout(true);
 
   // ── Vehicle CRUD — optimistic UI + background server sync ────────────────────
   const addVehicle = (vehicleData) => {
@@ -363,6 +422,7 @@ export function ShopProvider({ children }) {
   return (
     <ShopContext.Provider value={{
       user,
+      sessionChecked,
       login,
       signup,
       logout,
@@ -379,6 +439,8 @@ export function ShopProvider({ children }) {
       feedSource2,
       setFeedConfig2,
       saveRtspConfigLow,
+      linesLocked,
+      setLinesLocked,
     }}>
       {children}
     </ShopContext.Provider>

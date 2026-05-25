@@ -537,6 +537,16 @@ def init_db():
             attempts   INTEGER DEFAULT 0
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS auth_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            email      TEXT    NOT NULL,
+            username   TEXT,
+            action     TEXT    NOT NULL,
+            timestamp  TEXT    NOT NULL,
+            ip_address TEXT
+        )
+    ''')
     # Migrate: add status column to users if it doesn't exist yet
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
@@ -932,6 +942,21 @@ def select_best_result(candidates):
     return best_text, best_conf, all_preds
 
 
+# ── Auth log helpers ───────────────────────────────────────────────────────────
+
+def record_auth_event(email: str, username: str, action: str, ip: str = None):
+    try:
+        conn   = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO auth_log (email, username, action, timestamp, ip_address) VALUES (?,?,?,?,?)",
+            (email, username, action, datetime.now(timezone.utc).isoformat(), ip),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning("Failed to record auth event: %s", e)
+
 # ── Auth endpoints ─────────────────────────────────────────────────────────────
 
 @app.post("/register")
@@ -997,6 +1022,7 @@ def login(request: Request, user_data: UserLogin):
         raise HTTPException(status_code=403, detail="Your account is pending approval by the super admin.")
     if status == 'inactive':
         raise HTTPException(status_code=403, detail="Your account has been deactivated. Contact your administrator.")
+    record_auth_event(email, username, 'login', request.client.host if request.client else None)
     return {
         "access_token":  create_access_token(email, role),
         "refresh_token": create_refresh_token(email),
@@ -1031,6 +1057,39 @@ def refresh(payload: RefreshRequest):
         "access_token": create_access_token(email, role),
         "token_type":   "bearer",
     }
+
+
+@app.post("/logout")
+def logout(request: Request, current_user: dict = Depends(get_current_user)):
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users WHERE email = ?", (current_user["sub"],))
+    row = cursor.fetchone()
+    conn.close()
+    username = row[0] if row else None
+    record_auth_event(current_user["sub"], username, 'logout', request.client.host if request.client else None)
+    return {"ok": True}
+
+
+@app.get("/admin/auth-logs")
+def get_auth_logs(
+    limit: int = 200,
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user.get("role") not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, email, username, action, timestamp, ip_address FROM auth_log ORDER BY id DESC LIMIT ?",
+        (min(limit, 500),),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {"id": r[0], "email": r[1], "username": r[2], "action": r[3], "timestamp": r[4], "ip": r[5]}
+        for r in rows
+    ]
 
 
 # ── Feed config endpoints ─────────────────────────────────────────────────────

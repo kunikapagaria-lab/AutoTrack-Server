@@ -16,7 +16,7 @@ import {
 import './index.css';
 
 function MainApp() {
-  const { user, logout, vehicles, feedSource } = useShop();
+  const { user, sessionChecked, logout, vehicles, feedSource } = useShop();
   const [view,       setView_]       = useState(() => localStorage.getItem('autotrack_view') || 'dashboard');
   const [dualCamera, setDualCamera_] = useState(() => localStorage.getItem('autotrack_dualCam') === 'true');
 
@@ -80,8 +80,20 @@ function MainApp() {
     const link = document.createElement('a');
     link.href = url;
     link.download = `Workshop_${!days ? 'Full' : days === 1 ? 'Daily' : days === 7 ? 'Weekly' : 'Monthly'}_Report_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
+
+  if (!sessionChecked) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: '1rem', background: 'var(--bg-primary)' }}>
+        <div style={{ width: '40px', height: '40px', border: '3px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--accent-color)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' }}>AutoTrack</div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <AuthPortal />;
