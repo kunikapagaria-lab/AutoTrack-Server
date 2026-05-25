@@ -364,6 +364,9 @@ async def _sync_loop():
     while True:
         await asyncio.sleep(5)
         try:
+            config = get_branch_config()
+            if config.get('cloud_url') and config.get('cloud_api_key') and not config.get('branch_id'):
+                await _auto_discover_branch_id()
             await _flush_sync_queue()
             await _flush_user_sync_queue()
             await _poll_commands()
