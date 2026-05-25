@@ -4,14 +4,14 @@ import {
   Users, Clock, Download, Trash2, UserCheck, UserX, AlertCircle, LogIn, LogOut, ImageOff,
 } from 'lucide-react';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 // Resolve a stored image URL — relative /uploads/... paths are served from the local API
 function toImgUrl(url) {
   if (!url) return null;
   if (url.startsWith('http') || url.startsWith('data:')) return url;
   return `${API_URL}${url}`;
 }
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function authFetch(url, options = {}) {
   const token = localStorage.getItem('autotrack_access_token') || '';
