@@ -5,9 +5,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -16,47 +13,48 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        run: |
+          docker buildx create --use --name builder
+          docker buildx inspect --bootstrap
+
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       # ── Branch backend (FastAPI + YOLO + PaddleOCR) ──────────────────────────
       - name: Build & push branch backend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: backend/Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:latest
-          build-args: |
-            PLATE_MODEL_URL=${{ secrets.PLATE_MODEL_URL }}
-            CACHEBUST=${{ github.run_id }}
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache
-          cache-to:   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache,mode=max
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg PLATE_MODEL_URL=${{ secrets.PLATE_MODEL_URL }} \
+            --build-arg CACHEBUST=${{ github.run_id }} \
+            --cache-from type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache \
+            --cache-to   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache,mode=max \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:latest \
+            --push \
+            -f backend/Dockerfile \
+            .
 
       # ── Frontend (React + Nginx) ──────────────────────────────────────────────
       - name: Build & push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.frontend
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:latest
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:buildcache
-          cache-to:   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:buildcache,mode=max
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --cache-from type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:buildcache \
+            --cache-to   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:buildcache,mode=max \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-frontend:latest \
+            --push \
+            -f Dockerfile.frontend \
+            .
 
       # ── Cloud backend (lightweight FastAPI only) ──────────────────────────────
       - name: Build & push cloud backend
-        uses: docker/build-push-action@v6
-        with:
-          context: cloud_server
-          file: cloud_server/Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:latest
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:buildcache
-          cache-to:   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:buildcache,mode=max
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --cache-from type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:buildcache \
+            --cache-to   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:buildcache,mode=max \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/autotrack-cloud:latest \
+            --push \
+            -f cloud_server/Dockerfile \
+            cloud_server
