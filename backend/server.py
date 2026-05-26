@@ -459,7 +459,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 SECRET_KEY              = os.getenv("JWT_SECRET_KEY", "fallback-insecure-key-set-env-var")
 ALGORITHM               = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS  = 8   # one full workshop shift
-REFRESH_TOKEN_EXPIRE_DAYS  = 7   # stay logged in for a week
+REFRESH_TOKEN_EXPIRE_DAYS  = 14  # stay logged in for two weeks
 
 def create_access_token(email: str, role: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
