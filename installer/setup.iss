@@ -182,7 +182,7 @@ begin
       SaveStringToFile(DataDir + '\initial_config.json', ConfigContent, False);
     end;
 
-    // Pull Docker images
+    // Pull Docker images and start containers
     Exec(
       'cmd.exe',
       '/k "echo. && ' +
@@ -191,6 +191,8 @@ begin
           'echo. && ' +
           'cd /d "' + InstallDir + '" && ' +
           'docker compose pull && ' +
+          'docker compose down && ' +
+          'docker compose up -d && ' +
           'echo. && echo  Done! Close this window. && ' +
           'timeout /t 5 && exit"',
       InstallDir,

@@ -572,16 +572,14 @@ def _load_initial_config():
             initial = json.load(f)
         conn   = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM app_config")
-        if cursor.fetchone()[0] == 0:
-            for key, value in initial.items():
-                if value:
-                    cursor.execute(
-                        "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
-                        (key, value)
-                    )
-            conn.commit()
-            log.info("Installer config loaded: branch_name=%s", initial.get('branch_name', ''))
+        for key, value in initial.items():
+            if value:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+                    (key, value)
+                )
+        conn.commit()
+        log.info("Installer config loaded: branch_name=%s", initial.get('branch_name', ''))
         conn.close()
         os.remove(config_file)
     except Exception as e:
