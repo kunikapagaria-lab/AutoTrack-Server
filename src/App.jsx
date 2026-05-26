@@ -20,6 +20,7 @@ function MainApp() {
   const [view,       setView_]       = useState(() => localStorage.getItem('autotrack_view') || 'dashboard');
   const [dualCamera, setDualCamera_] = useState(() => localStorage.getItem('autotrack_dualCam') === 'true');
   const [reportMsg,  setReportMsg]   = useState(null);
+  const [topMsg,     setTopMsg]      = useState(null);
 
   const setView = (v) => { localStorage.setItem('autotrack_view', v); setView_(v); };
   const setDualCamera = (v) => {
@@ -41,10 +42,13 @@ function MainApp() {
   };
 
   const handleExportByRange = async (days) => {
+    const isFull = !days;
+    const setMsg = isFull ? setTopMsg : setReportMsg;
+    const clearMsg = isFull ? () => setTopMsg(null) : () => setReportMsg(null);
     const token = localStorage.getItem('autotrack_access_token');
     if (!token) {
-      setReportMsg({ type: 'error', text: 'Not logged in. Please log in again.' });
-      setTimeout(() => setReportMsg(null), 4000);
+      setMsg({ type: 'error', text: 'Not logged in. Please log in again.' });
+      setTimeout(clearMsg, 4000);
       return;
     }
     const rangeMap = { 1: 'daily', 7: 'weekly', 30: 'monthly' };
@@ -56,14 +60,14 @@ function MainApp() {
       });
       if (!res.ok) throw new Error('Export failed');
       const data = await res.json();
-      setReportMsg({
+      setMsg({
         type: 'success',
         text: `Saved ${data.records} records → ${data.windows_path}`,
       });
-      setTimeout(() => setReportMsg(null), 10000);
+      setTimeout(clearMsg, 10000);
     } catch {
-      setReportMsg({ type: 'error', text: 'Export failed. Try again.' });
-      setTimeout(() => setReportMsg(null), 4000);
+      setMsg({ type: 'error', text: 'Export failed. Try again.' });
+      setTimeout(clearMsg, 4000);
     }
   };
 
@@ -87,6 +91,18 @@ function MainApp() {
 
   return (
     <div className="app-container">
+      {topMsg && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+          padding: '12px 24px', fontSize: '0.85rem', fontWeight: 600,
+          textAlign: 'center',
+          background: topMsg.type === 'error' ? 'rgba(239,68,68,0.95)' : 'rgba(16,185,129,0.95)',
+          color: '#fff',
+          boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+        }}>
+          {topMsg.text}
+        </div>
+      )}
       <header>
         <div style={{ display: 'flex', alignItems: 'center', gap: '3rem', flex: 1 }}>
           <h1 style={{ 
