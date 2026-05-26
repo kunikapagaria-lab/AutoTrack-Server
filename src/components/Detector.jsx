@@ -114,7 +114,7 @@ export default function Detector() {
   useEffect(() => { vehiclesRef.current = vehicles; }, [vehicles]);
 
   const linesLockedRef = useRef(linesLocked);
-  useEffect(() => { linesLockedRef.current = linesLocked; }, [linesLocked]);
+  linesLockedRef.current = linesLocked;
 
   // ── load model ──
   useEffect(() => {
