@@ -40,7 +40,7 @@ function MainApp() {
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  const handleExportByRange = (days) => {
+  const handleExportByRange = async (days) => {
     const token = localStorage.getItem('autotrack_access_token');
     if (!token) {
       setReportMsg({ type: 'error', text: 'Not logged in. Please log in again.' });
@@ -49,10 +49,22 @@ function MainApp() {
     }
     const rangeMap = { 1: 'daily', 7: 'weekly', 30: 'monthly' };
     const range = days ? (rangeMap[days] || 'full') : 'full';
-    const url = `${import.meta.env.VITE_API_URL || ''}/export-csv?range=${range}&token=${encodeURIComponent(token)}`;
-    window.location.href = url;
-    setReportMsg({ type: 'success', text: 'Download started.' });
-    setTimeout(() => setReportMsg(null), 4000);
+    const base = import.meta.env.VITE_API_URL || '';
+    try {
+      const res = await fetch(`${base}/export-csv?range=${range}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Export failed');
+      const data = await res.json();
+      setReportMsg({
+        type: 'success',
+        text: `Saved ${data.records} records → ${data.windows_path}`,
+      });
+      setTimeout(() => setReportMsg(null), 10000);
+    } catch {
+      setReportMsg({ type: 'error', text: 'Export failed. Try again.' });
+      setTimeout(() => setReportMsg(null), 4000);
+    }
   };
 
   if (!sessionChecked) {

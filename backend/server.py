@@ -24,7 +24,7 @@ import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -1338,12 +1338,12 @@ def delete_vehicle(
 @app.get("/export-csv")
 def export_csv(
     range: str = "full",
-    token: str = None,
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
-    if not token:
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
-    payload = decode_token(token)
+    payload = decode_token(authorization.split(" ", 1)[1])
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="Invalid token type")
 
@@ -1377,13 +1377,21 @@ def export_csv(
     label = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly"}.get(range, "Full")
     date_str = now.strftime("%Y-%m-%d")
     filename = f"Workshop_{label}_Report_{date_str}.csv"
-    csv_bytes = ("﻿" + "\r\n".join(lines)).encode("utf-8")
+    csv_content = "﻿" + "\r\n".join(lines)
 
-    return Response(
-        content=csv_bytes,
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    # Write to the data volume so the file lands on the Windows host at
+    # C:\AutoTrack\backend\data\exports\<filename>
+    exports_dir = os.path.join(os.path.dirname(DB_PATH), "exports")
+    os.makedirs(exports_dir, exist_ok=True)
+    out_path = os.path.join(exports_dir, filename)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(csv_content)
+
+    return {
+        "filename": filename,
+        "records": len(rows),
+        "windows_path": f"C:\\AutoTrack\\backend\\data\\exports\\{filename}",
+    }
 
 
 # ── User management (admin) ───────────────────────────────────────────────────
