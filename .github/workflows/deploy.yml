@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -27,7 +27,7 @@ jobs:
 
       # ── Branch backend (FastAPI + YOLO + PaddleOCR) ──────────────────────────
       - name: Build & push branch backend
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: backend/Dockerfile
@@ -41,7 +41,7 @@ jobs:
 
       # ── Frontend (React + Nginx) ──────────────────────────────────────────────
       - name: Build & push frontend
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.frontend
@@ -52,7 +52,7 @@ jobs:
 
       # ── Cloud backend (lightweight FastAPI only) ──────────────────────────────
       - name: Build & push cloud backend
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: cloud_server
           file: cloud_server/Dockerfile
