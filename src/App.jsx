@@ -19,6 +19,7 @@ function MainApp() {
   const { user, sessionChecked, logout, vehicles, feedSource } = useShop();
   const [view,       setView_]       = useState(() => localStorage.getItem('autotrack_view') || 'dashboard');
   const [dualCamera, setDualCamera_] = useState(() => localStorage.getItem('autotrack_dualCam') === 'true');
+  const [reportMsg,  setReportMsg]   = useState(null);
 
   const setView = (v) => { localStorage.setItem('autotrack_view', v); setView_(v); };
   const setDualCamera = (v) => {
@@ -46,7 +47,8 @@ function MainApp() {
       : vehicles;
     
     if (filteredVehicles.length === 0) {
-      alert(`No records found for the requested period.`);
+      setReportMsg({ type: 'error', text: 'No records found for the selected period.' });
+      setTimeout(() => setReportMsg(null), 4000);
       return;
     }
 
@@ -60,30 +62,32 @@ function MainApp() {
           return `${h.status} (${date} ${time})`;
         })
         .join(' >> ');
-
       return [
-        v.id, 
-        v.licensePlate || 'PENDING', 
-        v.status || 'ENTERED', 
-        new Date(v.timestamp).toLocaleString('en-GB', { 
-          year: 'numeric', month: '2-digit', day: '2-digit', 
-          hour: '2-digit', minute: '2-digit', second: '2-digit', 
-          hour12: true 
-        }).replace(',', ''),
-        `"${historyStr}"`
+        `"${v.id}"`,
+        `"${v.licensePlate || 'PENDING'}"`,
+        `"${v.status || 'ENTERED'}"`,
+        `"${new Date(v.timestamp).toLocaleString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true })}"`,
+        `"${historyStr}"`,
       ];
     });
-    
-    const csvContent = [headers, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Workshop_${!days ? 'Full' : days === 1 ? 'Daily' : days === 7 ? 'Weekly' : 'Monthly'}_Report_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+
+    try {
+      const csvContent = '﻿' + [headers, ...rows].map(r => r.join(',')).join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url  = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href     = url;
+      link.download = `Workshop_${!days ? 'Full' : days === 1 ? 'Daily' : days === 7 ? 'Weekly' : 'Monthly'}_Report_${new Date().toISOString().split('T')[0]}.csv`;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => { document.body.removeChild(link); URL.revokeObjectURL(url); }, 1000);
+      setReportMsg({ type: 'success', text: `Downloaded ${filteredVehicles.length} records.` });
+      setTimeout(() => setReportMsg(null), 4000);
+    } catch (err) {
+      setReportMsg({ type: 'error', text: 'Download failed. Try again.' });
+      setTimeout(() => setReportMsg(null), 4000);
+    }
   };
 
   if (!sessionChecked) {
@@ -434,6 +438,14 @@ function MainApp() {
             {/* Reports & Exports Section */}
             <section style={{ marginTop: '1rem' }}>
               <h2 className="table-title" style={{ marginBottom: '1.5rem', fontSize: '1.1rem' }}>Reports & Exports</h2>
+              {reportMsg && (
+                <div style={{ marginBottom: '1rem', padding: '10px 16px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600,
+                  background: reportMsg.type === 'error' ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.12)',
+                  border: `1px solid ${reportMsg.type === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)'}`,
+                  color: reportMsg.type === 'error' ? '#ef4444' : '#10b981' }}>
+                  {reportMsg.text}
+                </div>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem' }}>
                 <ReportCard 
                   title="Daily Vehicle Report" 
