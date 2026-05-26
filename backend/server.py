@@ -578,6 +578,8 @@ def _load_initial_config():
                     "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
                     (key, value)
                 )
+        # Clear stale branch_id so _auto_discover_branch_id re-fetches it for the new API key
+        cursor.execute("DELETE FROM app_config WHERE key = 'branch_id'")
         conn.commit()
         log.info("Installer config loaded: branch_name=%s", initial.get('branch_name', ''))
         conn.close()
