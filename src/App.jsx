@@ -41,53 +41,18 @@ function MainApp() {
   };
 
   const handleExportByRange = (days) => {
-    const now = new Date();
-    const filteredVehicles = days 
-      ? vehicles.filter(v => new Date(v.timestamp) >= new Date(now.getTime() - (days * 24 * 60 * 60 * 1000)))
-      : vehicles;
-    
-    if (filteredVehicles.length === 0) {
-      setReportMsg({ type: 'error', text: 'No records found for the selected period.' });
+    const token = localStorage.getItem('autotrack_access_token');
+    if (!token) {
+      setReportMsg({ type: 'error', text: 'Not logged in. Please log in again.' });
       setTimeout(() => setReportMsg(null), 4000);
       return;
     }
-
-    const headers = ['ID', 'License Plate Number', 'Status', 'Current Timestamp', 'Activity Flow'];
-    const rows = filteredVehicles.map(v => {
-      const historyArr = v.history || [{ status: 'ENTERED', timestamp: v.timestamp }];
-      const historyStr = historyArr
-        .map(h => {
-          const time = new Date(h.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true });
-          const date = new Date(h.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-          return `${h.status} (${date} ${time})`;
-        })
-        .join(' >> ');
-      return [
-        `"${v.id}"`,
-        `"${v.licensePlate || 'PENDING'}"`,
-        `"${v.status || 'ENTERED'}"`,
-        `"${new Date(v.timestamp).toLocaleString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true })}"`,
-        `"${historyStr}"`,
-      ];
-    });
-
-    try {
-      const csvContent = '﻿' + [headers, ...rows].map(r => r.join(',')).join('\r\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url  = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href     = url;
-      link.download = `Workshop_${!days ? 'Full' : days === 1 ? 'Daily' : days === 7 ? 'Weekly' : 'Monthly'}_Report_${new Date().toISOString().split('T')[0]}.csv`;
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => { document.body.removeChild(link); URL.revokeObjectURL(url); }, 1000);
-      setReportMsg({ type: 'success', text: `Downloaded ${filteredVehicles.length} records.` });
-      setTimeout(() => setReportMsg(null), 4000);
-    } catch (err) {
-      setReportMsg({ type: 'error', text: 'Download failed. Try again.' });
-      setTimeout(() => setReportMsg(null), 4000);
-    }
+    const rangeMap = { 1: 'daily', 7: 'weekly', 30: 'monthly' };
+    const range = days ? (rangeMap[days] || 'full') : 'full';
+    const url = `${import.meta.env.VITE_API_URL || ''}/export-csv?range=${range}&token=${encodeURIComponent(token)}`;
+    window.location.href = url;
+    setReportMsg({ type: 'success', text: 'Download started.' });
+    setTimeout(() => setReportMsg(null), 4000);
   };
 
   if (!sessionChecked) {

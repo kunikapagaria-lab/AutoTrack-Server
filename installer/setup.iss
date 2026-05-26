@@ -145,6 +145,9 @@ begin
     ForceDirectories(BackendDir);
     ForceDirectories(DataDir);
 
+    // Wipe old database so every install starts clean
+    DeleteFile(DataDir + '\users.db');
+
     // Generate JWT secret key
     JWTKey     := GenerateJWTKey;
     BranchName := BranchPage.Values[0];

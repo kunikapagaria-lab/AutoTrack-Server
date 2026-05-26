@@ -24,7 +24,7 @@ import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -1333,6 +1333,57 @@ def delete_vehicle(
     db.commit()
     enqueue_sync_event('delete', vehicle_id, {'id': vehicle_id})
     return {"ok": True}
+
+
+@app.get("/export-csv")
+def export_csv(
+    range: str = "full",
+    token: str = None,
+    db: Session = Depends(get_db),
+):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_token(token)
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+
+    now = datetime.now(timezone.utc)
+    range_days = {"daily": 1, "weekly": 7, "monthly": 30}
+    days = range_days.get(range)
+
+    rows = db.query(VehicleORM).all()
+    if days:
+        cutoff = now - timedelta(days=days)
+        rows = [v for v in rows if datetime.fromisoformat(v.timestamp.replace("Z", "+00:00")) >= cutoff]
+
+    headers = ["ID", "License Plate Number", "Status", "Timestamp", "Activity Flow"]
+    lines = [",".join(headers)]
+    for v in rows:
+        history_arr = v.history or [{"status": "ENTERED", "timestamp": v.timestamp}]
+        history_str = " >> ".join(
+            f"{h.get('status','')} ({datetime.fromisoformat(h['timestamp'].replace('Z','+00:00')).strftime('%d %b %H:%M')})"
+            for h in history_arr
+        )
+        ts = datetime.fromisoformat(v.timestamp.replace("Z", "+00:00")).strftime("%d/%m/%Y %I:%M %p")
+        line = [
+            f'"{v.id}"',
+            f'"{v.license_plate or "PENDING"}"',
+            f'"{v.status}"',
+            f'"{ts}"',
+            f'"{history_str}"',
+        ]
+        lines.append(",".join(line))
+
+    label = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly"}.get(range, "Full")
+    date_str = now.strftime("%Y-%m-%d")
+    filename = f"Workshop_{label}_Report_{date_str}.csv"
+    csv_bytes = ("﻿" + "\r\n".join(lines)).encode("utf-8")
+
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── User management (admin) ───────────────────────────────────────────────────
