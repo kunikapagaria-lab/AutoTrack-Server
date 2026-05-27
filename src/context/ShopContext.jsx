@@ -42,7 +42,7 @@ export function ShopProvider({ children }) {
 
   // Detection lines lock — when true, lines are invisible and not draggable
   const [linesLocked, setLinesLocked_] = useState(
-    () => localStorage.getItem('autotrack_lines_locked') === 'true'
+    () => localStorage.getItem('autotrack_lines_locked') !== 'false'
   );
   const setLinesLocked = (val) => {
     localStorage.setItem('autotrack_lines_locked', String(val));
