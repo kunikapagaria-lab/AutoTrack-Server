@@ -341,6 +341,23 @@ export function ShopProvider({ children }) {
 
   const logout = () => doLogout(true);
 
+  // ── Record logout when app window is closed while logged in ───────────────────
+  useEffect(() => {
+    if (!user) return;
+    const handleUnload = () => {
+      const token = getAccessToken();
+      if (!token) return;
+      // keepalive keeps the request alive after the page is torn down
+      fetch(`${API_URL}/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => {});
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, [user]);
+
   // ── Vehicle CRUD — optimistic UI + background server sync ────────────────────
   const addVehicle = (vehicleData) => {
     const status     = vehicleData.status || 'ENTERED';
