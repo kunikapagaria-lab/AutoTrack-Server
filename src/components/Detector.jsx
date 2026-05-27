@@ -113,8 +113,6 @@ export default function Detector() {
   const vehiclesRef = useRef(vehicles);
   useEffect(() => { vehiclesRef.current = vehicles; }, [vehicles]);
 
-  const linesLockedRef = useRef(linesLocked);
-  linesLockedRef.current = linesLocked;
 
   // ── load model ──
   useEffect(() => {
@@ -154,7 +152,7 @@ export default function Detector() {
   }
 
   function onMouseDown(e) {
-    if (linesLockedRef.current) return;
+    if (linesLocked) return;
     const c = canvasRef.current; if (!c) return;
     const [x, y] = toCanvasCoords(e);
     const l1Y = getLineYAtX(line1Ref.current, x, c.width, c.height);
@@ -172,7 +170,7 @@ export default function Detector() {
   }
 
   function onMouseMove(e) {
-    if (linesLockedRef.current) return;
+    if (linesLocked) return;
     const c = canvasRef.current; if (!c) return;
     const [x, y] = toCanvasCoords(e);
     if (dragging.current) {
@@ -293,7 +291,7 @@ export default function Detector() {
         const preds = await model.detect(detectTarget, 30, 0.40);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        if (!linesLockedRef.current) {
+        if (!linesLocked) {
           drawLine(line1Ref.current, '#10b981', 'L1', '▼  LINE 1 — ENTERING');
           drawLine(line2Ref.current, '#f5a623', 'L2', '▲  LINE 2 — EXITING');
         }
@@ -531,7 +529,7 @@ export default function Detector() {
 
     tick();
     return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
-  }, [isMonitoring, isRTSP, model]);
+  }, [isMonitoring, isRTSP, model, linesLocked]);
 
   // ── render ──
   return (
