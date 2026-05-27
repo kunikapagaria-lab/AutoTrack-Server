@@ -74,7 +74,7 @@ export default function HighCameraDetector({ onTrigger }) {
   const [isLooping,      setIsLooping]      = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 
-  const { feedSource, updateVehicle } = useShop();
+  const { feedSource, updateVehicle, linesLocked } = useShop();
 
   useEffect(() => {
     let alive = true;
@@ -112,6 +112,7 @@ export default function HighCameraDetector({ onTrigger }) {
   }
 
   function onMouseDown(e) {
+    if (linesLocked) return;
     const c = canvasRef.current; if (!c) return;
     const [x, y] = toCanvasCoords(e);
     const l1Y  = getLineYAtX(line1Ref.current,     x, c.width, c.height);
@@ -131,6 +132,7 @@ export default function HighCameraDetector({ onTrigger }) {
   }
 
   function onMouseMove(e) {
+    if (linesLocked) return;
     const c = canvasRef.current; if (!c) return;
     const [x, y] = toCanvasCoords(e);
     if (dragging.current) {
@@ -242,9 +244,11 @@ export default function HighCameraDetector({ onTrigger }) {
         const preds = await model.detect(detectTarget, 30, 0.40);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        drawLine(line1Ref.current,     '#10b981', 'L1', '▼  LINE 1 — ENTERING');
-        drawLine(plateZoneRef.current, '#facc15', 'PZ', '◆  PLATE ZONE');
-        drawLine(line2Ref.current,     '#f5a623', 'L2', '▲  LINE 2 — EXITING');
+        if (!linesLocked) {
+          drawLine(line1Ref.current,     '#10b981', 'L1', '▼  LINE 1 — ENTERING');
+          drawLine(plateZoneRef.current, '#facc15', 'PZ', '◆  PLATE ZONE');
+          drawLine(line2Ref.current,     '#f5a623', 'L2', '▲  LINE 2 — EXITING');
+        }
 
         const cars = preds
           .filter(p => p.class !== 'person')
@@ -378,7 +382,7 @@ export default function HighCameraDetector({ onTrigger }) {
 
     tick();
     return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
-  }, [isMonitoring, isRTSP, model]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isMonitoring, isRTSP, model, linesLocked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="detector-section panel">
