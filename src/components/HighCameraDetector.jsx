@@ -61,9 +61,12 @@ export default function HighCameraDetector({ onTrigger }) {
   const trackersRef  = useRef([]);
 
   // Three draggable lines: L1 (entry), Plate Zone, L2 (exit)
-  const line1Ref     = useRef({ left: 0.30, right: 0.30 });
-  const plateZoneRef = useRef({ left: 0.50, right: 0.50 });
-  const line2Ref     = useRef({ left: 0.70, right: 0.70 });
+  const _s1 = (() => { try { return JSON.parse(localStorage.getItem('autotrack_hicam_line1')); } catch { return null; } })();
+  const _spz = (() => { try { return JSON.parse(localStorage.getItem('autotrack_hicam_platezone')); } catch { return null; } })();
+  const _s2 = (() => { try { return JSON.parse(localStorage.getItem('autotrack_hicam_line2')); } catch { return null; } })();
+  const line1Ref     = useRef(_s1  || { left: 0.30, right: 0.30 });
+  const plateZoneRef = useRef(_spz || { left: 0.50, right: 0.50 });
+  const line2Ref     = useRef(_s2  || { left: 0.70, right: 0.70 });
   const dragging     = useRef(null);
   const dragPart     = useRef(null);
 
@@ -155,7 +158,12 @@ export default function HighCameraDetector({ onTrigger }) {
       c.style.cursor = near ? 'pointer' : 'default';
     }
   }
-  function onMouseUp() { dragging.current = null; }
+  function onMouseUp() {
+    dragging.current = null;
+    localStorage.setItem('autotrack_hicam_line1',     JSON.stringify(line1Ref.current));
+    localStorage.setItem('autotrack_hicam_platezone', JSON.stringify(plateZoneRef.current));
+    localStorage.setItem('autotrack_hicam_line2',     JSON.stringify(line2Ref.current));
+  }
 
   // ── source controls ──
   function handleFileChange(e) {
