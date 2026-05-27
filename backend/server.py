@@ -1229,6 +1229,38 @@ def save_rtsp_config(
     return {"ok": True, "masked_url": mask_rtsp_url(data.rtsp_url)}
 
 
+@app.get("/config/lines")
+def get_line_config(_: dict = Depends(get_current_user)):
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM app_config WHERE key IN ('lines_single', 'lines_dual')")
+    rows   = dict(cursor.fetchall())
+    conn.close()
+    result = {}
+    for k in ('lines_single', 'lines_dual'):
+        if k in rows:
+            try:
+                result[k] = json.loads(rows[k])
+            except Exception:
+                pass
+    return result
+
+
+@app.post("/config/lines")
+def set_line_config(data: dict, _: dict = Depends(get_current_user)):
+    conn   = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    for key in ('lines_single', 'lines_dual'):
+        if key in data:
+            cursor.execute(
+                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+                (key, json.dumps(data[key]))
+            )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 # ── Image upload (protected) ───────────────────────────────────────────────────
 
 @app.post("/upload-image")

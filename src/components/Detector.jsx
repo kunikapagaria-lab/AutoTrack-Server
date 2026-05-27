@@ -127,6 +127,19 @@ export default function Detector() {
     };
   }, []);
 
+  // ── load line positions from backend (survives WebView2 localStorage wipe) ──
+  useEffect(() => {
+    const token = localStorage.getItem('autotrack_access_token');
+    if (!token) return;
+    fetch(`${_API}/config/lines`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.lines_single?.line1) line1Ref.current = d.lines_single.line1;
+        if (d?.lines_single?.line2) line2Ref.current = d.lines_single.line2;
+      })
+      .catch(() => {});
+  }, []);
+
   // ── auto-start from saved feed preference ──
   const autoStartedRef = useRef(false);
   useEffect(() => {
@@ -194,9 +207,17 @@ export default function Detector() {
   }
   function onMouseUp() {
     dragging.current = null;
-    // Persist line positions whenever user finishes dragging
+    const pos = { line1: line1Ref.current, line2: line2Ref.current };
     localStorage.setItem('autotrack_line1', JSON.stringify(line1Ref.current));
     localStorage.setItem('autotrack_line2', JSON.stringify(line2Ref.current));
+    const token = localStorage.getItem('autotrack_access_token');
+    if (token) {
+      fetch(`${_API}/config/lines`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ lines_single: pos }),
+      }).catch(() => {});
+    }
   }
 
   // ── source controls ──

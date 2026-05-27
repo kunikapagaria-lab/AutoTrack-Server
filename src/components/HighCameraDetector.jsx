@@ -99,6 +99,20 @@ export default function HighCameraDetector({ onTrigger }) {
     else if (feedSource === 'webcam') startWebcam();
   }, [model]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── load line positions from backend ──
+  useEffect(() => {
+    const token = localStorage.getItem('autotrack_access_token');
+    if (!token) return;
+    fetch(`${_API}/config/lines`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.lines_dual?.line1)     line1Ref.current     = d.lines_dual.line1;
+        if (d?.lines_dual?.platezone) plateZoneRef.current = d.lines_dual.platezone;
+        if (d?.lines_dual?.line2)     line2Ref.current     = d.lines_dual.line2;
+      })
+      .catch(() => {});
+  }, []);
+
   // ── draggable lines ──
   function toCanvasCoords(e) {
     const c = canvasRef.current;
@@ -160,9 +174,18 @@ export default function HighCameraDetector({ onTrigger }) {
   }
   function onMouseUp() {
     dragging.current = null;
+    const pos = { line1: line1Ref.current, platezone: plateZoneRef.current, line2: line2Ref.current };
     localStorage.setItem('autotrack_hicam_line1',     JSON.stringify(line1Ref.current));
     localStorage.setItem('autotrack_hicam_platezone', JSON.stringify(plateZoneRef.current));
     localStorage.setItem('autotrack_hicam_line2',     JSON.stringify(line2Ref.current));
+    const token = localStorage.getItem('autotrack_access_token');
+    if (token) {
+      fetch(`${_API}/config/lines`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ lines_dual: pos }),
+      }).catch(() => {});
+    }
   }
 
   // ── source controls ──
