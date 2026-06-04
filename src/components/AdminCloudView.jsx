@@ -164,6 +164,32 @@ export default function AdminCloudView({ onLogout }) {
     if (tab === 'activity')     loadAuthLogs();
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Heartbeat ping — keeps the session alive and tracks last_active ───────────
+  useEffect(() => {
+    const sendPing = () => {
+      const token = localStorage.getItem('autotrack_access_token');
+      if (!token) return;
+      fetch(`${API_URL}/ping`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      }).catch(() => {}); // silently ignore failures
+    };
+    sendPing(); // immediate ping
+    const interval = setInterval(sendPing, 30000); // then every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleLogout = () => {
+    const token = localStorage.getItem('autotrack_access_token');
+    if (token) {
+      fetch(`${API_URL}/logout`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      }).catch(() => {}); // fire-and-forget
+    }
+    onLogout();
+  };
+
   // ── Branch actions ──────────────────────────────────────────────────────────
 
   const selectBranch = (branch) => {
@@ -322,7 +348,7 @@ export default function AdminCloudView({ onLogout }) {
           <button onClick={downloadConsolidatedCSV} className="btn" style={{ fontSize: '0.75rem', padding: '6px 14px' }}>
             <Download size={12} /> Export All
           </button>
-          <button onClick={onLogout} className="btn" style={{ fontSize: '0.75rem', padding: '6px 16px' }}>
+          <button onClick={handleLogout} className="btn" style={{ fontSize: '0.75rem', padding: '6px 16px' }}>
             Logout
           </button>
         </div>
