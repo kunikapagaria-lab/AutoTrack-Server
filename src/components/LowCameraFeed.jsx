@@ -10,10 +10,23 @@ const FRAME_INTERVAL = BURST_DURATION / (BURST_FRAMES - 1); // 375ms
 
 async function fetchPlate(imageDataUrl) {
   try {
-    const blob = await (await fetch(imageDataUrl)).blob();
-    const fd   = new FormData();
+    let blob;
+    if (imageDataUrl.startsWith('data:')) {
+      const [header, b64] = imageDataUrl.split(',');
+      const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      blob = new Blob([bytes], { type: mime });
+    } else {
+      blob = await (await fetch(imageDataUrl)).blob();
+    }
+    const fd = new FormData();
     fd.append('file', new File([blob], 'cap.jpg', { type: 'image/jpeg' }));
-    const r = await fetch(`${_API}/detect-plate`, { method: 'POST', body: fd });
+    const token = localStorage.getItem('autotrack_access_token') || '';
+    const r = await fetch(`${_API}/detect-plate`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: fd,
+    });
     return r.ok ? await r.json() : null;
   } catch {
     return null;

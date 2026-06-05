@@ -265,8 +265,6 @@ async def _poll_commands():
         if not commands:
             return
         executed_ids = []
-        conn   = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
         for cmd in commands:
             cmd_id   = cmd['id']
             cmd_type = cmd['command_type']
@@ -276,7 +274,15 @@ async def _poll_commands():
                     email  = payload.get('email')
                     status = payload.get('status')
                     if email and status in ('active', 'inactive', 'pending'):
-                        cursor.execute("UPDATE users SET status = ? WHERE email = ?", (status, email))
+                        # Own connection per command — avoids holding an open raw
+                        # sqlite3 connection while SQLAlchemy sessions also write,
+                        # which causes "database is locked" under concurrent load.
+                        conn = sqlite3.connect(DB_PATH)
+                        try:
+                            conn.execute("UPDATE users SET status = ? WHERE email = ?", (status, email))
+                            conn.commit()
+                        finally:
+                            conn.close()
                 elif cmd_type == 'update_vehicle_status':
                     vehicle_id = payload.get('vehicle_id')
                     new_status = payload.get('status')
@@ -286,9 +292,9 @@ async def _poll_commands():
                         try:
                             v = db.query(VehicleORM).filter(VehicleORM.id == vehicle_id).first()
                             if v:
-                                v.status     = new_status
+                                v.status      = new_status
                                 v.last_update = ts
-                                v.history    = (v.history or []) + [{'status': new_status, 'timestamp': ts}]
+                                v.history     = (v.history or []) + [{'status': new_status, 'timestamp': ts}]
                                 db.commit()
                         finally:
                             db.close()
@@ -306,8 +312,6 @@ async def _poll_commands():
                 executed_ids.append(cmd_id)
             except Exception as cmd_err:
                 log.warning("Command %s execution failed: %s", cmd_id, cmd_err)
-        conn.commit()
-        conn.close()
         if executed_ids:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
@@ -456,7 +460,13 @@ app.add_middleware(RequestLogMiddleware)
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 # ── JWT config ────────────────────────────────────────────────────────────────
-SECRET_KEY              = os.getenv("JWT_SECRET_KEY", "fallback-insecure-key-set-env-var")
+SECRET_KEY              = os.getenv("JWT_SECRET_KEY", "")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY is not set. Generate one with: "
+        "python -c \"import secrets; print(secrets.token_hex(32))\" "
+        "and add it to backend/.env"
+    )
 ALGORITHM               = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS  = 8   # one full workshop shift
 REFRESH_TOKEN_EXPIRE_DAYS  = 14  # stay logged in for two weeks
@@ -1323,7 +1333,11 @@ def create_vehicle(
     db.add(row)
     db.commit()
     db.refresh(row)
-    enqueue_sync_event('create', row.id, vehicle_to_dict(row))
+    # Don't sync transient placeholders (WAITING + scanning) — they may be
+    # deleted within seconds when the plate resolves. The update endpoint
+    # will emit a 'create' event once the vehicle reaches a real status.
+    if not (row.status == 'WAITING' and row.plate_status == 'scanning'):
+        enqueue_sync_event('create', row.id, vehicle_to_dict(row))
     return vehicle_to_dict(row)
 
 
@@ -1339,6 +1353,7 @@ def update_vehicle(
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Vehicle not found")
+    was_unsynced = (row.status == 'WAITING' and row.plate_status == 'scanning')
     update_data = updates.dict(exclude_unset=True)
     if "license_plate" in update_data and update_data["license_plate"]:
         update_data["license_plate"] = sanitize_plate(update_data["license_plate"])
@@ -1346,7 +1361,12 @@ def update_vehicle(
         setattr(row, field, val)
     db.commit()
     db.refresh(row)
-    enqueue_sync_event('update', row.id, vehicle_to_dict(row))
+    # If this vehicle was never synced (was a transient placeholder), emit
+    # 'create' now that it has reached a real status. Skip if still unresolved.
+    still_placeholder = (row.status == 'WAITING' and row.plate_status == 'scanning')
+    if not still_placeholder:
+        event_type = 'create' if was_unsynced else 'update'
+        enqueue_sync_event(event_type, row.id, vehicle_to_dict(row))
     return vehicle_to_dict(row)
 
 
@@ -1361,23 +1381,25 @@ def delete_vehicle(
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Vehicle not found")
+    was_unsynced = (row.status == 'WAITING' and row.plate_status == 'scanning')
     db.delete(row)
     db.commit()
-    enqueue_sync_event('delete', vehicle_id, {'id': vehicle_id})
+    # Only sync deletes for vehicles that were previously synced to cloud.
+    # Transient placeholders (WAITING + scanning) were never sent, so no
+    # delete event is needed — sending one would create a ghost delete on cloud.
+    if not was_unsynced:
+        enqueue_sync_event('delete', vehicle_id, {'id': vehicle_id})
     return {"ok": True}
 
 
 @app.get("/export-csv")
 def export_csv(
     range: str = "full",
-    authorization: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    payload = decode_token(authorization.split(" ", 1)[1])
-    if payload.get("type") != "access":
-        raise HTTPException(status_code=401, detail="Invalid token type")
+    if current_user.get("role") not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     now = datetime.now(timezone.utc)
     range_days = {"daily": 1, "weekly": 7, "monthly": 30}
@@ -1477,7 +1499,7 @@ def update_branch_user_status(
 
 @app.post("/detect-plate")
 @limiter.limit("30/minute")
-def detect_plate(request: Request, file: UploadFile = File(...)):
+def detect_plate(request: Request, file: UploadFile = File(...), _: dict = Depends(get_current_user)):
     if plate_model is None:
         return {"error": "Plate model failed to load on server start."}
 
@@ -1485,7 +1507,7 @@ def detect_plate(request: Request, file: UploadFile = File(...)):
     if file.content_type not in ALLOWED_MIME:
         raise HTTPException(status_code=400, detail="Only JPEG, PNG, or WebP images are accepted.")
 
-    log = []
+    detection_log = []
     try:
         # Read with size cap — abort if file exceeds limit
         contents = file.file.read(MAX_UPLOAD_BYTES + 1)
@@ -1505,20 +1527,20 @@ def detect_plate(request: Request, file: UploadFile = File(...)):
             car_results    = car_model(img, classes=VEHICLE_CLASSES, device='cpu', verbose=False)
             car_boxes      = car_results[0].boxes if car_results else []
             vehicle_count  = len(car_boxes)
-            log.append(f"[CAR] {vehicle_count} vehicle(s) detected by YOLOv8n")
+            detection_log.append(f"[CAR] {vehicle_count} vehicle(s) detected by YOLOv8n")
             for box in car_boxes:
                 cls_id   = int(box.cls[0])
                 cls_name = {2:'car',3:'motorcycle',5:'bus',7:'truck'}.get(cls_id,'vehicle')
-                log.append(f"  → {cls_name}  conf={float(box.conf[0]):.2f}")
+                detection_log.append(f"  → {cls_name}  conf={float(box.conf[0]):.2f}")
         else:
-            log.append("[CAR] Car model not loaded, skipping vehicle detection")
+            detection_log.append("[CAR] Car model not loaded, skipping vehicle detection")
 
         plate_results = plate_model(img, device='cpu', verbose=False)
         plate_boxes   = plate_results[0].boxes if plate_results else []
-        log.append(f"[PLATE] {len(plate_boxes)} plate(s) detected by licence_plate.pt")
+        detection_log.append(f"[PLATE] {len(plate_boxes)} plate(s) detected by licence_plate.pt")
 
         if len(plate_boxes) == 0:
-            return {"found": False, "detection_log": log}
+            return {"found": False, "detection_log": detection_log}
 
         best_box  = max(plate_boxes, key=lambda b: float(b.conf[0]))
         best_conf = float(best_box.conf[0])
@@ -1528,31 +1550,31 @@ def detect_plate(request: Request, file: UploadFile = File(...)):
         pad_x  = int((x2-x1) * 0.05);  pad_y = int((y2-y1) * 0.05)
         px1    = max(0, x1-pad_x);     py1   = max(0, y1-pad_y)
         px2    = min(w, x2+pad_x);     py2   = min(h, y2+pad_y)
-        log.append(f"  → Best plate bbox=[{x1},{y1},{x2},{y2}]  conf={best_conf:.2f}")
+        detection_log.append(f"  → Best plate bbox=[{x1},{y1},{x2},{y2}]  conf={best_conf:.2f}")
 
         plate_roi = img[py1:py2, px1:px2]
         if plate_roi.shape[0] == 0 or plate_roi.shape[1] == 0:
-            log.append("[OCR] Plate crop is empty, skipping OCR")
+            detection_log.append("[OCR] Plate crop is empty, skipping OCR")
             return {"found": True, "confidence": round(best_conf,3), "bbox":[x1,y1,x2,y2],
-                    "plate_text": None, "ocr_confidence": 0.0, "detection_log": log}
+                    "plate_text": None, "ocr_confidence": 0.0, "detection_log": detection_log}
 
-        log.append("[OCR] Rectifying plate perspective...")
+        detection_log.append("[OCR] Rectifying plate perspective...")
         rectified = rectify_plate(plate_roi)
-        log.append("[OCR] Generating 16 preprocessing variants...")
+        detection_log.append("[OCR] Generating 16 preprocessing variants...")
         variants  = preprocess_variants(rectified, plate_roi)
-        log.append("[OCR] Running PaddleOCR on all variants...")
+        detection_log.append("[OCR] Running PaddleOCR on all variants...")
         candidates = run_ocr_multiple(variants, ocr_reader)
 
-        log.append(f"[OCR] {len(candidates)} variant(s) returned text:")
+        detection_log.append(f"[OCR] {len(candidates)} variant(s) returned text:")
         for text, conf, variant_name in candidates:
             cleaned = postprocess_text(text)
-            log.append(f"  [{variant_name}] raw='{text}'  cleaned='{cleaned}'  conf={conf:.2f}")
+            detection_log.append(f"  [{variant_name}] raw='{text}'  cleaned='{cleaned}'  conf={conf:.2f}")
 
         best_text, best_ocr_conf, _ = select_best_result(candidates)
         if best_text:
-            log.append(f"[RESULT] ✓ '{best_text}'  ocr_conf={best_ocr_conf:.2f}")
+            detection_log.append(f"[RESULT] ✓ '{best_text}'  ocr_conf={best_ocr_conf:.2f}")
         else:
-            log.append("[RESULT] No plate text could be read")
+            detection_log.append("[RESULT] No plate text could be read")
 
         # Encode plate crop and upload to storage
         display_img = cv2.resize(plate_roi, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
@@ -1567,12 +1589,12 @@ def detect_plate(request: Request, file: UploadFile = File(...)):
             "plate_url":       plate_url,
             "plate_text":      best_text or None,
             "ocr_confidence":  round(best_ocr_conf, 3),
-            "detection_log":   log,
+            "detection_log":   detection_log,
         }
     except Exception as e:
-        log.append(f"[ERROR] {e}")
+        detection_log.append(f"[ERROR] {e}")
         log.error("Plate detection error: %s", e, exc_info=True)
-        return {"error": str(e), "detection_log": log}
+        return {"error": str(e), "detection_log": detection_log}
 
 
 # ── Image cleanup ─────────────────────────────────────────────────────────────

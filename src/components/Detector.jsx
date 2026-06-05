@@ -24,7 +24,12 @@ async function fetchPlate(imageDataUrl) {
     }
     const fd = new FormData();
     fd.append('file', new File([blob], 'cap.jpg', { type: 'image/jpeg' }));
-    const r = await fetch(`${_API}/detect-plate`, { method: 'POST', body: fd });
+    const token = localStorage.getItem('autotrack_access_token') || '';
+    const r = await fetch(`${_API}/detect-plate`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: fd,
+    });
     return r.ok ? await r.json() : null;
   } catch {
     return null;

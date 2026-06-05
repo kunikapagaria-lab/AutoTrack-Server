@@ -21,7 +21,13 @@ DATA_DIR = os.path.join(_DIR, 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH  = os.path.join(DATA_DIR, 'cloud.db')
 
-SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'change-this-in-production')
+SECRET_KEY = os.getenv('JWT_SECRET_KEY', '')
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY is not set. Generate one with: "
+        "python -c \"import secrets; print(secrets.token_hex(32))\" "
+        "and add it to cloud_server/.env"
+    )
 ALGORITHM  = 'HS256'
 
 pwd_ctx = CryptContext(schemes=['bcrypt'], deprecated='auto')
@@ -282,7 +288,7 @@ async def get_auth_logs(limit: int = 200, _: dict = Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)
     c    = conn.cursor()
     c.execute(
-        '''SELECT a.id, a.email, a.username, a.action, a.timestamp, a.ip_address, b.name
+        '''SELECT a.id, a.email, a.username, a.action, a.timestamp, a.ip_address, b.name, a.branch_id
            FROM auth_log a
            LEFT JOIN branches b ON a.branch_id = b.id
            ORDER BY a.id DESC LIMIT ?''',
@@ -292,9 +298,22 @@ async def get_auth_logs(limit: int = 200, _: dict = Depends(get_current_user)):
     conn.close()
     return [
         {'id': r[0], 'email': r[1], 'username': r[2], 'action': r[3],
-         'timestamp': r[4], 'ip': r[5], 'branchName': r[6]}
+         'timestamp': r[4], 'ip': r[5], 'branchName': r[6], 'branchId': r[7]}
         for r in rows
     ]
+
+@app.delete('/admin/auth-logs')
+async def clear_auth_logs(branch_id: Optional[str] = None, _: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    if branch_id:
+        c.execute('DELETE FROM auth_log WHERE branch_id = ?', (branch_id,))
+    else:
+        c.execute('DELETE FROM auth_log')
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    return {'ok': True, 'deleted': deleted}
 
 
 # ── Branch management ──────────────────────────────────────────────────────────
@@ -527,6 +546,26 @@ async def delete_cloud_vehicle(
     conn.commit()
     conn.close()
     return {'ok': True}
+
+@app.delete('/branches/{branch_id}/vehicles')
+async def delete_all_branch_vehicles(branch_id: str, _: dict = Depends(get_current_user)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('SELECT id FROM vehicles WHERE branch_id = ?', (branch_id,))
+    vehicle_ids = [r[0] for r in c.fetchall()]
+    if not vehicle_ids:
+        conn.close()
+        return {'ok': True, 'deleted': 0}
+    ts = datetime.now(timezone.utc).isoformat()
+    for vid in vehicle_ids:
+        c.execute(
+            'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?,?,?,?)',
+            (branch_id, 'delete_vehicle', json.dumps({'vehicle_id': vid}), ts)
+        )
+    c.execute('DELETE FROM vehicles WHERE branch_id = ?', (branch_id,))
+    conn.commit()
+    conn.close()
+    return {'ok': True, 'deleted': len(vehicle_ids)}
 
 @app.get('/vehicles/export')
 async def export_all_vehicles(_: dict = Depends(get_current_user)):

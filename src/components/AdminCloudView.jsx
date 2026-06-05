@@ -254,6 +254,29 @@ export default function AdminCloudView({ onLogout }) {
     } catch { alert('Failed to delete vehicle'); }
   };
 
+  const deleteAllVehicles = async () => {
+    if (!selectedBranch || branchVehicles.length === 0) return;
+    if (!window.confirm(`Delete ALL ${branchVehicles.length} vehicle records from "${selectedBranch.name}"?\n\nThis will also queue deletions on the branch. This cannot be undone.`)) return;
+    try {
+      const res = await authFetch(`${API_URL}/branches/${selectedBranch.id}/vehicles`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed');
+      setBranchVehicles([]);
+    } catch { alert('Failed to delete all vehicles'); }
+  };
+
+  const clearActivityLogs = async (branchId) => {
+    const label = branchId ? 'logs for this branch' : 'ALL activity logs across all branches';
+    if (!window.confirm(`Clear ${label}? This cannot be undone.`)) return;
+    try {
+      const url = branchId
+        ? `${API_URL}/admin/auth-logs?branch_id=${encodeURIComponent(branchId)}`
+        : `${API_URL}/admin/auth-logs`;
+      const res = await authFetch(url, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed');
+      setAuthLogs(prev => branchId ? prev.filter(l => l.branchId !== branchId) : []);
+    } catch { alert('Failed to clear activity logs'); }
+  };
+
   // ── User actions ────────────────────────────────────────────────────────────
 
   const updateUserStatus = async (branchId, localUserId, status) => {
@@ -322,7 +345,7 @@ export default function AdminCloudView({ onLogout }) {
           AUTOTRACK
         </h1>
 
-        <nav style={{ padding: 0, display: 'flex', gap: '4px' }}>
+        <nav className="cloud-admin-nav" style={{ padding: 0, display: 'flex', gap: '4px', overflowX: 'auto', flexShrink: 1, minWidth: 0 }}>
           {[
             { id: 'branches',    label: 'Branches' },
             { id: 'users',       label: 'All Users' },
@@ -368,6 +391,7 @@ export default function AdminCloudView({ onLogout }) {
                 onRefresh={() => selectBranch(selectedBranch)}
                 onUpdateVehicleStatus={updateVehicleStatus}
                 onDeleteVehicle={deleteVehicle}
+                onDeleteAllVehicles={deleteAllVehicles}
                 onUpdateUserStatus={(uid, status) => updateUserStatus(selectedBranch.id, uid, status)}
               />
             : <BranchListView
@@ -408,7 +432,13 @@ export default function AdminCloudView({ onLogout }) {
         )}
 
         {tab === 'activity' && (
-          <ActivityLogView logs={authLogs} loading={loadingAuthLogs} onRefresh={loadAuthLogs} />
+          <ActivityLogView
+            logs={authLogs}
+            loading={loadingAuthLogs}
+            onRefresh={loadAuthLogs}
+            branches={branches}
+            onClearLogs={clearActivityLogs}
+          />
         )}
       </main>
 
@@ -586,7 +616,7 @@ function BranchListView({ branches, loading, showRegister, setShowRegister, newB
 // ── Branch detail ─────────────────────────────────────────────────────────────
 
 function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, loading,
-  onBack, onRefresh, onUpdateVehicleStatus, onDeleteVehicle, onUpdateUserStatus }) {
+  onBack, onRefresh, onUpdateVehicleStatus, onDeleteVehicle, onDeleteAllVehicles, onUpdateUserStatus }) {
   const STATUSES = ['WAITING', 'ENTERED', 'TEMP_OUT', 'EXITED'];
   const [previewVehicle, setPreviewVehicle] = useState(null);
   return (
@@ -625,7 +655,20 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
             No vehicles synced from this branch.
           </div>
         ) : (
-          <div className="panel" style={{ overflow: 'hidden', borderRadius: '14px' }}>
+          <div className="panel" style={{ borderRadius: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '0.875rem 1rem', borderBottom: '1px solid var(--border-color)' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                {vehicles.length} vehicle{vehicles.length !== 1 ? 's' : ''}
+              </span>
+              <button onClick={onDeleteAllVehicles}
+                style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)',
+                  color: '#ef4444', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer',
+                  fontSize: '0.7rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <Trash2 size={12} /> Delete All
+              </button>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
             <table className="workshop-table">
               <thead>
                 <tr>
@@ -687,6 +730,7 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
                 })}
               </tbody>
             </table>
+            </div>{/* /overflow-x wrapper */}
           </div>
         )
       )}
