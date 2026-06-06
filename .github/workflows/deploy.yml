@@ -26,11 +26,18 @@ jobs:
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       # ── Branch backend (FastAPI + YOLO + PaddleOCR) ──────────────────────────
+      - name: Download plate model
+        run: |
+          if [ -n "${{ secrets.PLATE_MODEL_URL }}" ]; then
+            curl -fL -o licence_plate.pt "${{ secrets.PLATE_MODEL_URL }}"
+          else
+            echo "::warning::PLATE_MODEL_URL secret not set — plate detection will be disabled"
+          fi
+
       - name: Build & push branch backend
         run: |
           docker buildx build \
             --platform linux/amd64 \
-            --build-arg PLATE_MODEL_URL=${{ secrets.PLATE_MODEL_URL }} \
             --build-arg CACHEBUST=${{ github.run_id }} \
             --cache-from type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache \
             --cache-to   type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/autotrack-backend:buildcache,mode=max \
