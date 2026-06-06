@@ -959,3 +959,108 @@ video {
   font-size: 0.8rem;
   color: var(--text-secondary);
 }
+
+/* ── Responsive ────────────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  header {
+    height: auto;
+    min-height: 60px;
+    padding: 0.75rem 1rem;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .cloud-admin-nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .cloud-admin-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .main-content {
+    padding: 0.75rem 1rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .kanban-board {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .overview-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .workshop-table th,
+  .workshop-table td {
+    padding: 0.6rem 0.5rem;
+    font-size: 0.78rem;
+  }
+
+  /* ── Superadmin column hiding ───────────────────────────── */
+
+  /* Vehicles: hide Vehicle ID (col 3) and Entry Time (col 4) */
+  .vehicles-table th:nth-child(3),
+  .vehicles-table td:nth-child(3),
+  .vehicles-table th:nth-child(4),
+  .vehicles-table td:nth-child(4) {
+    display: none;
+  }
+
+  /* Branch users: hide Email (col 2) */
+  .branch-users-table th:nth-child(2),
+  .branch-users-table td:nth-child(2) {
+    display: none;
+  }
+
+  /* All users: hide Email (col 2) and Role (col 4) */
+  .all-users-table th:nth-child(2),
+  .all-users-table td:nth-child(2),
+  .all-users-table th:nth-child(4),
+  .all-users-table td:nth-child(4) {
+    display: none;
+  }
+
+  /* Activity log: hide Email (col 2) and IP Address (col 6) */
+  .activity-table th:nth-child(2),
+  .activity-table td:nth-child(2),
+  .activity-table th:nth-child(6),
+  .activity-table td:nth-child(6) {
+    display: none;
+  }
+
+  /* Superadmins: hide Email (col 2) */
+  .superadmins-table th:nth-child(2),
+  .superadmins-table td:nth-child(2) {
+    display: none;
+  }
+
+  /* Header: tighter logo on small screens */
+  header h1 {
+    font-size: 1.1rem;
+    letter-spacing: 0.12em;
+  }
+
+  /* Hide "Export All" label, keep icon only */
+  .admin-header-actions .btn-label {
+    display: none;
+  }
+
+}
+
+@media (max-width: 420px) {
+  .kanban-board {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-row {
+    grid-template-columns: 1fr;
+  }
+}

@@ -367,9 +367,9 @@ export default function AdminCloudView({ onLogout }) {
           ))}
         </nav>
 
-        <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto', alignItems: 'center' }}>
+        <div className="admin-header-actions" style={{ display: 'flex', gap: '8px', marginLeft: 'auto', alignItems: 'center' }}>
           <button onClick={downloadConsolidatedCSV} className="btn" style={{ fontSize: '0.75rem', padding: '6px 14px' }}>
-            <Download size={12} /> Export All
+            <Download size={12} /> <span className="btn-label">Export All</span>
           </button>
           <button onClick={handleLogout} className="btn" style={{ fontSize: '0.75rem', padding: '6px 16px' }}>
             Logout
@@ -669,7 +669,7 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
               </button>
             </div>
             <div style={{ overflowX: 'auto' }}>
-            <table className="workshop-table">
+            <table className="workshop-table vehicles-table">
               <thead>
                 <tr>
                   <th style={{ width: '60px' }}>Photo</th>
@@ -702,7 +702,25 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
                         <ImageOff size={14} color="rgba(255,255,255,0.2)" />
                       </div>
                     </td>
-                    <td style={{ fontWeight: 800, letterSpacing: '0.05em' }}>{v.licensePlate || 'PENDING'}</td>
+                    <td>
+                      {v.licensePlate ? (
+                        <span style={{ fontWeight: 800, letterSpacing: '0.05em' }}>{v.licensePlate}</span>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '0.65rem',
+                            fontWeight: 700, background: 'rgba(234,179,8,0.1)', color: '#eab308',
+                            border: '1px solid rgba(234,179,8,0.2)', display: 'inline-block', width: 'fit-content' }}>
+                            PENDING
+                          </span>
+                          <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                            {v.plateStatus === 'not_found' && 'Plate not detected'}
+                            {v.plateStatus === 'duplicate'  && 'Duplicate vehicle'}
+                            {v.plateStatus === 'scanning'   && 'Scan in progress'}
+                            {!v.plateStatus                 && 'No plate data'}
+                          </span>
+                        </div>
+                      )}
+                    </td>
                     <td style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{v.id}</td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
                       {v.timestamp ? new Date(v.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
@@ -835,8 +853,9 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
             No users synced from this branch yet.
           </div>
         ) : (
-          <div className="panel" style={{ overflow: 'hidden', borderRadius: '14px' }}>
-            <table className="workshop-table">
+          <div className="panel" style={{ borderRadius: '14px' }}>
+            <div style={{ overflowX: 'auto' }}>
+            <table className="workshop-table branch-users-table">
               <thead>
                 <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr>
               </thead>
@@ -873,6 +892,7 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
                 ))}
               </tbody>
             </table>
+            </div>{/* /overflow-x wrapper */}
           </div>
         )
       )}
@@ -916,8 +936,9 @@ function UsersView({ users, loading, onUpdateStatus, onRefresh }) {
           No users found. Users appear here after their branch syncs to the cloud.
         </div>
       ) : (
-        <div className="panel" style={{ overflow: 'hidden', borderRadius: '14px' }}>
-          <table className="workshop-table">
+        <div className="panel" style={{ borderRadius: '14px' }}>
+          <div style={{ overflowX: 'auto' }}>
+          <table className="workshop-table all-users-table">
             <thead>
               <tr><th>Name</th><th>Email</th><th>Branch</th><th>Role</th><th>Status</th><th>Actions</th></tr>
             </thead>
@@ -955,6 +976,7 @@ function UsersView({ users, loading, onUpdateStatus, onRefresh }) {
               ))}
             </tbody>
           </table>
+          </div>{/* /overflow-x wrapper */}
         </div>
       )}
     </div>
@@ -1003,8 +1025,9 @@ function SuperadminsView({ superadmins, loading, onAdd, onDelete, onRefresh }) {
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>Loading…</div>
       ) : (
-        <div className="panel" style={{ overflow: 'hidden', borderRadius: '14px' }}>
-          <table className="workshop-table">
+        <div className="panel" style={{ borderRadius: '14px' }}>
+          <div style={{ overflowX: 'auto' }}>
+          <table className="workshop-table superadmins-table">
             <thead>
               <tr><th>Name</th><th>Email</th><th>Actions</th></tr>
             </thead>
@@ -1026,6 +1049,7 @@ function SuperadminsView({ superadmins, loading, onAdd, onDelete, onRefresh }) {
               ))}
             </tbody>
           </table>
+          </div>{/* /overflow-x wrapper */}
         </div>
       )}
 
@@ -1085,59 +1109,93 @@ function SuperadminsView({ superadmins, loading, onAdd, onDelete, onRefresh }) {
 
 // ── Activity log view ─────────────────────────────────────────────────────────
 
-function ActivityLogView({ logs, loading, onRefresh }) {
+function ActivityLogView({ logs, loading, onRefresh, onClearLogs }) {
+  const [selectedBranch, setSelectedBranch] = useState('');
+
+  const logBranches = [...new Map(
+    logs.filter(l => l.branchId).map(l => [l.branchId, l.branchName || l.branchId])
+  ).entries()].map(([id, name]) => ({ id, name }));
+
+  const filtered = selectedBranch ? logs.filter(l => l.branchId === selectedBranch) : logs;
+  const selectedName = logBranches.find(b => b.id === selectedBranch)?.name;
+
   const fmt = (iso) => {
     if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    return new Date(iso).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+    });
   };
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: '1.5rem', flexWrap: 'wrap', gap: '8px' }}>
         <h2 style={{ fontSize: '1rem', fontWeight: 800, color: 'white' }}>
-          Activity Log ({logs.length})
+          Activity Log ({filtered.length}{selectedName ? ` — ${selectedName}` : ''})
         </h2>
-        <button onClick={onRefresh} className="btn" style={{ fontSize: '0.75rem', padding: '6px 14px' }}>
-          <RefreshCw size={12} /> Refresh
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {logBranches.length > 0 && (
+            <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)',
+                color: 'white', padding: '6px 12px', borderRadius: '8px', fontSize: '0.8rem',
+                cursor: 'pointer', outline: 'none' }}>
+              <option value="">All Branches</option>
+              {logBranches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
+          <button
+            onClick={() => onClearLogs(selectedBranch || null)}
+            disabled={filtered.length === 0}
+            style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)',
+              color: '#ef4444', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer',
+              fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px',
+              opacity: filtered.length === 0 ? 0.4 : 1 }}>
+            <Trash2 size={12} /> {selectedBranch ? 'Clear Branch' : 'Clear All'}
+          </button>
+          <button onClick={onRefresh} className="btn" style={{ fontSize: '0.75rem', padding: '6px 14px' }}>
+            <RefreshCw size={12} /> Refresh
+          </button>
+        </div>
       </div>
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>Loading…</div>
-      ) : logs.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
           No activity recorded yet.
         </div>
       ) : (
-        <div className="panel" style={{ overflow: 'hidden', borderRadius: '14px' }}>
-          <table className="workshop-table">
-            <thead>
-              <tr><th>User</th><th>Email</th><th>Branch</th><th>Action</th><th>Timestamp</th><th>IP Address</th></tr>
-            </thead>
-            <tbody>
-              {logs.map(entry => (
-                <tr key={entry.id}>
-                  <td style={{ fontWeight: 700, color: 'white' }}>{entry.username || '—'}</td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{entry.email}</td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{entry.branchName || '—'}</td>
-                  <td>
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '5px',
-                      padding: '3px 10px', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: 700,
-                      background: entry.action === 'login' ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
-                      color: entry.action === 'login' ? '#10b981' : '#ef4444',
-                    }}>
-                      {entry.action === 'login' ? <LogIn size={10} /> : <LogOut size={10} />}
-                      {entry.action.toUpperCase()}
-                    </span>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{fmt(entry.timestamp)}</td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontFamily: 'monospace' }}>{entry.ip || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="panel" style={{ borderRadius: '14px' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="workshop-table activity-table">
+              <thead>
+                <tr><th>User</th><th>Email</th><th>Branch</th><th>Action</th><th>Timestamp</th><th>IP Address</th></tr>
+              </thead>
+              <tbody>
+                {filtered.map(entry => (
+                  <tr key={entry.id}>
+                    <td style={{ fontWeight: 700, color: 'white' }}>{entry.username || '—'}</td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{entry.email}</td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{entry.branchName || '—'}</td>
+                    <td>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '5px',
+                        padding: '3px 10px', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: 700,
+                        background: entry.action === 'login' ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                        color: entry.action === 'login' ? '#10b981' : '#ef4444',
+                      }}>
+                        {entry.action === 'login' ? <LogIn size={10} /> : <LogOut size={10} />}
+                        {entry.action.toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{fmt(entry.timestamp)}</td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontFamily: 'monospace' }}>{entry.ip || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
