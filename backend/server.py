@@ -841,32 +841,27 @@ def rectify_plate(image):
 
 def _generate_variants(image, prefix):
     gray      = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    clahe2    = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    clahe_img = clahe2.apply(gray)
+    clahe_img = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(gray)
     bilateral = cv2.bilateralFilter(clahe_img, 11, 17, 17)
     _, otsu   = cv2.threshold(bilateral, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    _, hc     = cv2.threshold(clahe_img,  0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    b, g, r   = cv2.split(image)
-    ev        = cv2.addWeighted(b, 0.5, r, 0.5, 0)
-    ev        = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(ev)
-    sharp_k   = np.array([[-1,-1,-1],[-1,9,-1],[-1,-1,-1]])
+    # 3 variants per image (was 8) — keeps accuracy while cutting OCR calls by 75%
     raw = {
         f'{prefix}_bilateral':         bilateral,
-        f'{prefix}_adaptive_mean':     cv2.adaptiveThreshold(bilateral, 255, cv2.ADAPTIVE_THRESH_MEAN_C,     cv2.THRESH_BINARY, 11, 2),
-        f'{prefix}_adaptive_gaussian': cv2.adaptiveThreshold(bilateral, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2),
         f'{prefix}_otsu':              otsu,
-        f'{prefix}_inverted':          cv2.bitwise_not(otsu),
-        f'{prefix}_sharpened':         cv2.filter2D(clahe_img, -1, sharp_k),
-        f'{prefix}_high_contrast':     hc,
-        f'{prefix}_ev_optimized':      ev,
+        f'{prefix}_adaptive_gaussian': cv2.adaptiveThreshold(bilateral, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2),
     }
     return {k: cv2.resize(v, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC) for k, v in raw.items()}
 
 
 def preprocess_variants(rectified, raw):
-    variants = {}
-    variants.update(_generate_variants(rectified, 'rect'))
-    variants.update(_generate_variants(raw, 'raw'))
+    # Rectified image gets 3 variants; raw gets 1 bilateral fallback.
+    # Total: 4 OCR calls instead of 16. Order: rectified first so early-exit
+    # triggers on the best-quality crop.
+    variants = _generate_variants(rectified, 'rect')
+    gray      = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
+    clahe_img = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(gray)
+    bilateral = cv2.bilateralFilter(clahe_img, 11, 17, 17)
+    variants['raw_bilateral'] = cv2.resize(bilateral, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
     return variants
 
 
@@ -892,6 +887,12 @@ def postprocess_text(text):
             corrected.append(char)
     return ''.join(corrected)
 
+
+_PLATE_PATTERNS_QUICK = [
+    re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}$'),
+    re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1}[0-9]{4}$'),
+    re.compile(r'^[A-Z]{2}[0-9]{2}[0-9]{4}$'),
+]
 
 def run_ocr_multiple(variants, reader):
     candidates = []
@@ -919,6 +920,10 @@ def run_ocr_multiple(variants, reader):
         merged_text = ''.join(b[1] for b in blocks)
         avg_conf    = sum(b[2] for b in blocks) / len(blocks)
         candidates.append((merged_text, avg_conf, name))
+        # Early exit: valid Indian plate format + high confidence — skip remaining variants
+        cleaned = postprocess_text(merged_text)
+        if avg_conf > 0.75 and any(p.match(cleaned) for p in _PLATE_PATTERNS_QUICK):
+            break
     return candidates
 
 
