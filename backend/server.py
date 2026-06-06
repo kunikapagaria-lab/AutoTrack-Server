@@ -21,7 +21,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
@@ -1504,7 +1504,13 @@ def update_branch_user_status(
 
 @app.post("/detect-plate")
 @limiter.limit("30/minute")
-def detect_plate(request: Request, file: UploadFile = File(...), _: dict = Depends(get_current_user)):
+def detect_plate(
+    request: Request,
+    file: UploadFile = File(...),
+    cx: Optional[float] = Form(None),
+    cy: Optional[float] = Form(None),
+    _: dict = Depends(get_current_user),
+):
     if plate_model is None:
         return {"error": "Plate model failed to load on server start."}
 
@@ -1547,7 +1553,18 @@ def detect_plate(request: Request, file: UploadFile = File(...), _: dict = Depen
         if len(plate_boxes) == 0:
             return {"found": False, "detection_log": detection_log}
 
-        best_box  = max(plate_boxes, key=lambda b: float(b.conf[0]))
+        # If the caller passed a centroid (cx, cy) and multiple plates were found,
+        # pick the plate nearest to the centroid instead of highest confidence.
+        # This acts as a safety net when two vehicles cross close together.
+        if cx is not None and cy is not None and len(plate_boxes) > 1:
+            def _plate_dist(box):
+                bx1, by1, bx2, by2 = box.xyxy[0].tolist()
+                return ((bx1 + bx2) / 2 - cx) ** 2 + ((by1 + by2) / 2 - cy) ** 2
+            best_box = min(plate_boxes, key=_plate_dist)
+            detection_log.append(f"  → Centroid ({cx:.0f},{cy:.0f}) used to pick nearest plate")
+        else:
+            best_box = max(plate_boxes, key=lambda b: float(b.conf[0]))
+
         best_conf = float(best_box.conf[0])
         x1, y1, x2, y2 = map(int, best_box.xyxy[0].tolist())
 

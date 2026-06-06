@@ -16,16 +16,8 @@ COPY backend/ .
 # yolov8n.pt — ultralytics downloads it automatically if not present
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" 2>/dev/null || true
 
-# licence_plate.pt — custom model hosted on GitHub Releases
-# CACHEBUST forces Docker to re-download the model on every build
-ARG CACHEBUST=1
-ARG PLATE_MODEL_URL
-RUN if [ -n "$PLATE_MODEL_URL" ]; then \
-        curl -L -o /app/licence_plate.pt "$PLATE_MODEL_URL" && \
-        echo "licence_plate.pt downloaded successfully"; \
-    else \
-        echo "WARNING: PLATE_MODEL_URL not set — plate detection disabled"; \
-    fi
+# licence_plate.pt — custom YOLO model (~103 MB, gitignored, must be present in AutoTrack-Server/
+COPY licence_plate.pt /app/licence_plate.pt
 
 RUN mkdir -p uploads data
 

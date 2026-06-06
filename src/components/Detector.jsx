@@ -9,7 +9,7 @@ import { useShop } from '../context/ShopContext';
 
 const _API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-async function fetchPlate(imageDataUrl) {
+async function fetchPlate(imageDataUrl, cx, cy) {
   try {
     // Convert base64 data URL directly to blob — avoids fetch('data:...')
     // which is blocked in WebView2 (pywebview native window)
@@ -24,6 +24,8 @@ async function fetchPlate(imageDataUrl) {
     }
     const fd = new FormData();
     fd.append('file', new File([blob], 'cap.jpg', { type: 'image/jpeg' }));
+    if (cx != null) fd.append('cx', String(cx));
+    if (cy != null) fd.append('cy', String(cy));
     const token = localStorage.getItem('autotrack_access_token') || '';
     const r = await fetch(`${_API}/detect-plate`, {
       method: 'POST',
@@ -34,6 +36,29 @@ async function fetchPlate(imageDataUrl) {
   } catch {
     return null;
   }
+}
+
+// Crops a full-frame data URL to the vehicle bounding box (with 12% padding).
+// Returns { dataUrl, cx, cy } where cx/cy are the center of the cropped image.
+// Falls back to the original frame if the crop area is too small.
+async function cropFrame(dataUrl, bbox, cw, ch) {
+  const [bx, by, bw, bh] = bbox;
+  const PAD = 0.12;
+  const sx  = Math.max(0, bx - bw * PAD);
+  const sy  = Math.max(0, by - bh * PAD);
+  const sw  = Math.min(cw - sx, bw * (1 + 2 * PAD));
+  const sh  = Math.min(ch - sy, bh * (1 + 2 * PAD));
+  const ow  = Math.round(sw);
+  const oh  = Math.round(sh);
+  if (ow < 80 || oh < 40) return { dataUrl, cx: null, cy: null };
+  const c = document.createElement('canvas');
+  c.width = ow; c.height = oh;
+  await new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => { c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, ow, oh); resolve(); };
+    img.src = dataUrl;
+  });
+  return { dataUrl: c.toDataURL('image/jpeg', 0.9), cx: Math.round(ow / 2), cy: Math.round(oh / 2) };
 }
 
 // Converts relative /uploads/... paths to absolute. Full URLs and data: URIs pass through.
@@ -402,6 +427,10 @@ export default function Detector() {
           if (t.l1Crossed && t.l2Crossed && !t.triggered && car.score > 0.20) {
             t.triggered = true;
 
+            const vehicleBbox = [...car.bbox]; // snapshot bbox at trigger time
+            const canvasW = canvas.width;
+            const canvasH = canvas.height;
+
             const direction = t.firstLine === 1 ? 'INGRESS' : 'EGRESS';
             const pendingId = `VEH-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
             const rawFrame  = t.frameBuffer[Math.floor(t.frameBuffer.length / 2)]
@@ -435,7 +464,10 @@ export default function Detector() {
               // scanAttempt is UI-only, no need to persist to database
               updateVehicle(pendingId, { scanAttempt: index + 1 }, false);
 
-              const pr = await fetchPlate(currentUrl);
+              // Option 1: crop to vehicle bbox before OCR to exclude other vehicles' plates
+              // Option 2: pass crop center as centroid so backend picks nearest plate
+              const { dataUrl: cropUrl, cx: cropCx, cy: cropCy } = await cropFrame(currentUrl, vehicleBbox, canvasW, canvasH);
+              const pr = await fetchPlate(cropUrl, cropCx, cropCy);
               const isStrong = pr && pr.found && (pr.ocr_confidence > 0.85 || (pr.plate_text && pr.plate_text.length >= 8));
 
               if (isStrong || index >= t.frameBuffer.length - 1) {
