@@ -1081,6 +1081,52 @@ def refresh(payload: RefreshRequest):
     }
 
 
+# ── Pending auto-logout store (in-memory; confirmed after 10 s if not cancelled) ─
+# Maps email → { timestamp, username, ip }
+_pending_auto_logouts: dict = {}
+
+def _flush_pending_logouts():
+    """Confirm any pending auto-logouts that were not cancelled within 10 seconds."""
+    now     = time.time()
+    expired = [e for e, v in _pending_auto_logouts.items() if now - v['timestamp'] >= 10]
+    for email in expired:
+        entry = _pending_auto_logouts.pop(email)
+        record_auth_event(email, entry['username'], 'logout', entry['ip'])
+        enqueue_user_sync('auth_log', 0, {
+            'email':     email,
+            'username':  entry['username'],
+            'action':    'logout',
+            'timestamp': datetime.fromtimestamp(entry['timestamp'], timezone.utc).isoformat(),
+            'ip':        entry['ip'],
+        })
+
+@app.post("/auto-logout")
+@limiter.limit("30/minute")
+def auto_logout(request: Request, current_user: dict = Depends(get_current_user)):
+    """Called on beforeunload; kept pending for 10 s so a page refresh can cancel it."""
+    email = current_user["sub"]
+    conn  = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    conn.close()
+    _pending_auto_logouts[email] = {
+        'timestamp': time.time(),
+        'username':  row[0] if row else None,
+        'ip':        request.client.host if request.client else None,
+    }
+    return {"ok": True}
+
+@app.post("/cancel-auto-logout")
+def cancel_auto_logout(current_user: dict = Depends(get_current_user)):
+    """Called on page load if the previous unload was a refresh, not a close."""
+    email = current_user["sub"]
+    entry = _pending_auto_logouts.get(email)
+    if entry and time.time() - entry['timestamp'] < 15:
+        del _pending_auto_logouts[email]
+    return {"ok": True}
+
+
 @app.post("/logout")
 def logout(request: Request, current_user: dict = Depends(get_current_user)):
     conn   = sqlite3.connect(DB_PATH)
@@ -1107,6 +1153,7 @@ def get_auth_logs(
 ):
     if current_user.get("role") not in ("admin", "superadmin"):
         raise HTTPException(status_code=403, detail="Admin access required")
+    _flush_pending_logouts()
     conn   = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(

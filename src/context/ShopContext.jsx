@@ -110,8 +110,23 @@ export function ShopProvider({ children }) {
     if (sessionCheckDone.current) return;
     sessionCheckDone.current = true;
 
-    const storedUser    = localStorage.getItem('autosense_user');
-    const refreshToken  = getRefreshToken();
+    const storedUser   = localStorage.getItem('autosense_user');
+    const refreshToken = getRefreshToken();
+
+    // If the page is reloading (refresh), cancel the pending auto-logout the
+    // beforeunload handler already sent. sessionStorage survives a refresh but
+    // is wiped on tab close, so the flag is only present here on refresh.
+    const wasRefreshing = sessionStorage.getItem('_autotrackRefreshing');
+    sessionStorage.removeItem('_autotrackRefreshing');
+    if (wasRefreshing) {
+      const token = getAccessToken();
+      if (token) {
+        fetch(`${API_URL}/cancel-auto-logout`, {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+    }
 
     if (!storedUser || !refreshToken) {
       setSessionChecked(true);
@@ -341,22 +356,27 @@ export function ShopProvider({ children }) {
 
   const logout = () => doLogout(true);
 
-  // ── Record logout when app window is closed while logged in ───────────────────
+  // ── Auto-logout on tab close (not on refresh) ─────────────────────────────────
+  // beforeunload fires for both close and refresh, so we always send /auto-logout
+  // and set a sessionStorage flag. On refresh the flag survives and the startup
+  // session check calls /cancel-auto-logout. On close the flag is wiped with
+  // sessionStorage, so no cancel fires and the pending logout is confirmed after 10 s.
   useEffect(() => {
     if (!user) return;
     const handleUnload = () => {
       const token = getAccessToken();
       if (!token) return;
-      // keepalive keeps the request alive after the page is torn down
-      fetch(`${API_URL}/logout`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+      sessionStorage.setItem('_autotrackRefreshing', '1');
+      fetch(`${API_URL}/auto-logout`, {
+        method:   'POST',
+        headers:  { Authorization: `Bearer ${token}` },
         keepalive: true,
       }).catch(() => {});
     };
     window.addEventListener('beforeunload', handleUnload);
     return () => window.removeEventListener('beforeunload', handleUnload);
   }, [user]);
+
 
   // ── Vehicle CRUD — optimistic UI + background server sync ────────────────────
   const addVehicle = (vehicleData) => {
