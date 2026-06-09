@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Building2, Plus, RefreshCw, X, Copy, CheckCircle,
   Users, Clock, Download, Trash2, UserCheck, UserX, AlertCircle, LogIn, LogOut, ImageOff,
+  Car, Wrench,
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -619,6 +620,7 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
   onBack, onRefresh, onUpdateVehicleStatus, onDeleteVehicle, onDeleteAllVehicles, onUpdateUserStatus }) {
   const STATUSES = ['WAITING', 'ENTERED', 'TEMP_OUT', 'EXITED'];
   const [previewVehicle, setPreviewVehicle] = useState(null);
+  const [statusFilter, setStatusFilter] = useState(null);
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
@@ -650,105 +652,167 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
       {detailTab === 'vehicles' && (
         loading ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>Loading vehicles…</div>
-        ) : vehicles.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-            No vehicles synced from this branch.
-          </div>
         ) : (
-          <div className="panel" style={{ borderRadius: '14px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '0.875rem 1rem', borderBottom: '1px solid var(--border-color)' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                {vehicles.length} vehicle{vehicles.length !== 1 ? 's' : ''}
-              </span>
-              <button onClick={onDeleteAllVehicles}
-                style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)',
-                  color: '#ef4444', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer',
-                  fontSize: '0.7rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Trash2 size={12} /> Delete All
-              </button>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-            <table className="workshop-table vehicles-table">
-              <thead>
-                <tr>
-                  <th style={{ width: '60px' }}>Photo</th>
-                  <th>License Plate</th><th>Vehicle ID</th><th>Entry Time</th><th>Status</th><th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {vehicles.map(v => {
-                  const imgUrl = toImgUrl(v.imageUrl);
-                  return (
-                  <tr key={v.id}>
-                    <td>
-                      {imgUrl ? (
-                        <img
-                          src={imgUrl}
-                          alt="vehicle"
-                          onClick={() => setPreviewVehicle(v)}
-                          style={{ width: '52px', height: '38px', objectFit: 'cover', borderRadius: '6px',
-                            cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)',
-                            transition: 'transform 0.15s', display: 'block' }}
-                          onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.08)'}
-                          onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
-                          onError={e => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'flex'; }}
-                        />
-                      ) : null}
-                      <div style={{ display: imgUrl ? 'none' : 'flex', width: '52px', height: '38px',
-                        borderRadius: '6px', background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        alignItems: 'center', justifyContent: 'center' }}>
-                        <ImageOff size={14} color="rgba(255,255,255,0.2)" />
+          <div>
+            {/* ── Overview stat boxes ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '1.5rem' }}>
+              {[
+                { label: 'TOTAL TODAY',      value: vehicles.length,                                    filter: null,       Icon: Car,          color: '#00d2ff' },
+                { label: 'INSIDE WORKSHOP',  value: vehicles.filter(v => v.status === 'ENTERED').length,  filter: 'ENTERED',  Icon: Wrench,       color: '#10b981' },
+                { label: 'TEMP OUT',         value: vehicles.filter(v => v.status === 'TEMP_OUT').length, filter: 'TEMP_OUT', Icon: RefreshCw,    color: '#f472b6' },
+                { label: 'DELIVERED',        value: vehicles.filter(v => v.status === 'EXITED').length,   filter: 'EXITED',   Icon: CheckCircle,  color: '#a78bfa' },
+                { label: 'WAITING LIST',     value: vehicles.filter(v => v.status === 'WAITING').length,  filter: 'WAITING',  Icon: Clock,        color: '#6b7280' },
+              ].map(({ label, value, filter, Icon, color }) => {
+                const active = statusFilter === filter;
+                return (
+                  <button key={label} onClick={() => setStatusFilter(active ? null : filter)}
+                    style={{ background: active ? `${color}12` : 'var(--card-bg, rgba(255,255,255,0.04))',
+                      border: `1px solid ${active ? color + '50' : 'var(--border-color)'}`,
+                      borderRadius: '14px', padding: '1rem', cursor: 'pointer', textAlign: 'left',
+                      transition: 'border-color 0.15s, background 0.15s', outline: 'none' }}>
+                    <div style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--text-secondary)',
+                      letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '10px' }}>
+                      {label}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '1.8rem', fontWeight: 900, color, lineHeight: 1 }}>{value}</span>
+                      <div style={{ width: '34px', height: '34px', borderRadius: '50%',
+                        background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Icon size={15} color={color} />
                       </div>
-                    </td>
-                    <td>
-                      {v.licensePlate ? (
-                        <span style={{ fontWeight: 800, letterSpacing: '0.05em' }}>{v.licensePlate}</span>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                          <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '0.65rem',
-                            fontWeight: 700, background: 'rgba(234,179,8,0.1)', color: '#eab308',
-                            border: '1px solid rgba(234,179,8,0.2)', display: 'inline-block', width: 'fit-content' }}>
-                            PENDING
-                          </span>
-                          <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
-                            {v.plateStatus === 'not_found' && 'Plate not detected'}
-                            {v.plateStatus === 'duplicate'  && 'Duplicate vehicle'}
-                            {v.plateStatus === 'scanning'   && 'Scan in progress'}
-                            {!v.plateStatus                 && 'No plate data'}
-                          </span>
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{v.id}</td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                      {v.timestamp ? new Date(v.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
-                    </td>
-                    <td>
-                      <select value={v.status} onChange={e => onUpdateVehicleStatus(v.id, e.target.value)}
-                        style={{ background: `${STATUS_COLORS[v.status] || '#6b7280'}20`,
-                          color: STATUS_COLORS[v.status] || '#6b7280',
-                          border: `1px solid ${STATUS_COLORS[v.status] || '#6b7280'}40`,
-                          padding: '4px 8px', borderRadius: '6px', fontSize: '0.7rem',
-                          fontWeight: 700, cursor: 'pointer', outline: 'none' }}>
-                        {STATUSES.map(s => <option key={s} value={s} style={{ background: '#1a1c22', color: 'white' }}>{s}</option>)}
-                      </select>
-                    </td>
-                    <td>
-                      <button onClick={() => onDeleteVehicle(v.id)}
-                        style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
-                          color: '#ef4444', padding: '5px 8px', borderRadius: '6px', cursor: 'pointer',
-                          display: 'flex', alignItems: 'center' }}>
-                        <Trash2 size={12} />
-                      </button>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>{/* /overflow-x wrapper */}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ── Live Vehicle Status table ── */}
+            <div className="panel" style={{ borderRadius: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '0.875rem 1rem', borderBottom: '1px solid var(--border-color)', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontWeight: 800, fontSize: '0.8rem', color: 'white',
+                    textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    Live Vehicle Status
+                  </span>
+                  {statusFilter && (
+                    <button onClick={() => setStatusFilter(null)}
+                      style={{ fontSize: '0.62rem', padding: '2px 8px', borderRadius: '9999px',
+                        background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)',
+                        color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      {statusFilter} ×
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.62rem',
+                    fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.1)',
+                    border: '1px solid rgba(16,185,129,0.2)', padding: '3px 9px', borderRadius: '9999px' }}>
+                    <span style={{ width: '5px', height: '5px', borderRadius: '50%',
+                      background: '#10b981', display: 'inline-block' }} />
+                    LIVE
+                  </span>
+                  <button onClick={onDeleteAllVehicles}
+                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)',
+                      color: '#ef4444', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer',
+                      fontSize: '0.7rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <Trash2 size={12} /> Delete All
+                  </button>
+                </div>
+              </div>
+
+              {(() => {
+                const filtered = statusFilter ? vehicles.filter(v => v.status === statusFilter) : vehicles;
+                return filtered.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                    {statusFilter ? `No ${statusFilter} vehicles.` : 'No vehicles synced from this branch.'}
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="workshop-table vehicles-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '60px' }}>Photo</th>
+                          <th>License Plate</th>
+                          <th>Vehicle ID</th>
+                          <th>Entry Time</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filtered.map(v => {
+                          const imgUrl = toImgUrl(v.imageUrl);
+                          return (
+                            <tr key={v.id}>
+                              <td>
+                                {imgUrl ? (
+                                  <img src={imgUrl} alt="vehicle" onClick={() => setPreviewVehicle(v)}
+                                    style={{ width: '52px', height: '38px', objectFit: 'cover', borderRadius: '6px',
+                                      cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)',
+                                      transition: 'transform 0.15s', display: 'block' }}
+                                    onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.08)'}
+                                    onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+                                    onError={e => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'flex'; }}
+                                  />
+                                ) : null}
+                                <div style={{ display: imgUrl ? 'none' : 'flex', width: '52px', height: '38px',
+                                  borderRadius: '6px', background: 'rgba(255,255,255,0.04)',
+                                  border: '1px solid rgba(255,255,255,0.08)',
+                                  alignItems: 'center', justifyContent: 'center' }}>
+                                  <ImageOff size={14} color="rgba(255,255,255,0.2)" />
+                                </div>
+                              </td>
+                              <td>
+                                {v.licensePlate ? (
+                                  <span style={{ fontWeight: 800, letterSpacing: '0.05em' }}>{v.licensePlate}</span>
+                                ) : (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                    <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '0.65rem',
+                                      fontWeight: 700, background: 'rgba(234,179,8,0.1)', color: '#eab308',
+                                      border: '1px solid rgba(234,179,8,0.2)', display: 'inline-block', width: 'fit-content' }}>
+                                      PENDING
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                                      {v.plateStatus === 'not_found' && 'Plate not detected'}
+                                      {v.plateStatus === 'duplicate'  && 'Duplicate vehicle'}
+                                      {v.plateStatus === 'scanning'   && 'Scan in progress'}
+                                      {!v.plateStatus                 && 'No plate data'}
+                                    </span>
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{v.id}</td>
+                              <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                {v.timestamp ? new Date(v.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                              </td>
+                              <td>
+                                <select value={v.status} onChange={e => onUpdateVehicleStatus(v.id, e.target.value)}
+                                  style={{ background: `${STATUS_COLORS[v.status] || '#6b7280'}20`,
+                                    color: STATUS_COLORS[v.status] || '#6b7280',
+                                    border: `1px solid ${STATUS_COLORS[v.status] || '#6b7280'}40`,
+                                    padding: '4px 8px', borderRadius: '6px', fontSize: '0.7rem',
+                                    fontWeight: 700, cursor: 'pointer', outline: 'none' }}>
+                                  {STATUSES.map(s => <option key={s} value={s} style={{ background: '#1a1c22', color: 'white' }}>{s}</option>)}
+                                </select>
+                              </td>
+                              <td>
+                                <button onClick={() => onDeleteVehicle(v.id)}
+                                  style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
+                                    color: '#ef4444', padding: '5px 8px', borderRadius: '6px', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center' }}>
+                                  <Trash2 size={12} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )
       )}
