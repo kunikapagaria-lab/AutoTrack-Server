@@ -1081,49 +1081,55 @@ def refresh(payload: RefreshRequest):
     }
 
 
-# ── Pending auto-logout store (in-memory; confirmed after 10 s if not cancelled) ─
-# Maps email → { timestamp, username, ip }
+# ── Pending auto-logout store (in-memory; confirmed after 10 s via threading.Timer) ─
+# Maps email → { timer, username, ip, timestamp }
 _pending_auto_logouts: dict = {}
-
-def _flush_pending_logouts():
-    """Confirm any pending auto-logouts that were not cancelled within 10 seconds."""
-    now     = time.time()
-    expired = [e for e, v in _pending_auto_logouts.items() if now - v['timestamp'] >= 10]
-    for email in expired:
-        entry = _pending_auto_logouts.pop(email)
-        record_auth_event(email, entry['username'], 'logout', entry['ip'])
-        enqueue_user_sync('auth_log', 0, {
-            'email':     email,
-            'username':  entry['username'],
-            'action':    'logout',
-            'timestamp': datetime.fromtimestamp(entry['timestamp'], timezone.utc).isoformat(),
-            'ip':        entry['ip'],
-        })
 
 @app.post("/auto-logout")
 @limiter.limit("30/minute")
 def auto_logout(request: Request, current_user: dict = Depends(get_current_user)):
-    """Called on beforeunload; kept pending for 10 s so a page refresh can cancel it."""
+    """Called on beforeunload. Waits 10 s then confirms the logout automatically.
+    A page refresh cancels it via /cancel-auto-logout before the timer fires."""
     email = current_user["sub"]
     conn  = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT username FROM users WHERE email = ?", (email,))
     row = cursor.fetchone()
     conn.close()
-    _pending_auto_logouts[email] = {
-        'timestamp': time.time(),
-        'username':  row[0] if row else None,
-        'ip':        request.client.host if request.client else None,
-    }
+    username  = row[0] if row else None
+    ip        = request.client.host if request.client else None
+    timestamp = datetime.now(timezone.utc)
+
+    # Cancel any existing timer for this user (e.g. rapid close-reopen)
+    existing = _pending_auto_logouts.pop(email, None)
+    if existing:
+        existing['timer'].cancel()
+
+    def _confirm():
+        _pending_auto_logouts.pop(email, None)
+        record_auth_event(email, username, 'logout', ip)
+        enqueue_user_sync('auth_log', 0, {
+            'email':     email,
+            'username':  username,
+            'action':    'logout',
+            'timestamp': timestamp.isoformat(),
+            'ip':        ip,
+        })
+
+    timer = threading.Timer(10.0, _confirm)
+    timer.daemon = True
+    timer.start()
+
+    _pending_auto_logouts[email] = {'timer': timer, 'username': username, 'ip': ip}
     return {"ok": True}
 
 @app.post("/cancel-auto-logout")
 def cancel_auto_logout(current_user: dict = Depends(get_current_user)):
-    """Called on page load if the previous unload was a refresh, not a close."""
+    """Called on page reload to cancel the pending auto-logout (was a refresh, not a close)."""
     email = current_user["sub"]
-    entry = _pending_auto_logouts.get(email)
-    if entry and time.time() - entry['timestamp'] < 15:
-        del _pending_auto_logouts[email]
+    entry = _pending_auto_logouts.pop(email, None)
+    if entry:
+        entry['timer'].cancel()
     return {"ok": True}
 
 
@@ -1153,7 +1159,6 @@ def get_auth_logs(
 ):
     if current_user.get("role") not in ("admin", "superadmin"):
         raise HTTPException(status_code=403, detail="Admin access required")
-    _flush_pending_logouts()
     conn   = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
