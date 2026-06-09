@@ -657,7 +657,7 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
             {/* ── Overview stat boxes ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '1.5rem' }}>
               {[
-                { label: 'TOTAL TODAY',      value: vehicles.length,                                    filter: null,       Icon: Car,          color: '#00d2ff' },
+                { label: 'TOTAL',            value: vehicles.length,                                    filter: null,       Icon: Car,          color: '#00d2ff' },
                 { label: 'INSIDE WORKSHOP',  value: vehicles.filter(v => v.status === 'ENTERED').length,  filter: 'ENTERED',  Icon: Wrench,       color: '#10b981' },
                 { label: 'TEMP OUT',         value: vehicles.filter(v => v.status === 'TEMP_OUT').length, filter: 'TEMP_OUT', Icon: RefreshCw,    color: '#f472b6' },
                 { label: 'DELIVERED',        value: vehicles.filter(v => v.status === 'EXITED').length,   filter: 'EXITED',   Icon: CheckCircle,  color: '#a78bfa' },
