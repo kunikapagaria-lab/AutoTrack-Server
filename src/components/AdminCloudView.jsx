@@ -246,6 +246,17 @@ export default function AdminCloudView({ onLogout }) {
     } catch { alert('Failed to update vehicle status'); }
   };
 
+  const updateVehiclePlate = async (vehicleId, licensePlate) => {
+    const trimmed = licensePlate.trim().toUpperCase();
+    try {
+      const res = await authFetch(`${API_URL}/vehicles/${vehicleId}?branch_id=${selectedBranch.id}`, {
+        method: 'PATCH', body: JSON.stringify({ license_plate: trimmed, plate_status: 'found' }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      setBranchVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, licensePlate: trimmed, plateStatus: 'found' } : v));
+    } catch { alert('Failed to update license plate'); }
+  };
+
   const deleteVehicle = async (vehicleId) => {
     if (!window.confirm('Delete this vehicle record? This cannot be undone.')) return;
     try {
@@ -391,6 +402,7 @@ export default function AdminCloudView({ onLogout }) {
                 onBack={() => setSelectedBranch(null)}
                 onRefresh={() => selectBranch(selectedBranch)}
                 onUpdateVehicleStatus={updateVehicleStatus}
+                onUpdateVehiclePlate={updateVehiclePlate}
                 onDeleteVehicle={deleteVehicle}
                 onDeleteAllVehicles={deleteAllVehicles}
                 onUpdateUserStatus={(uid, status) => updateUserStatus(selectedBranch.id, uid, status)}
@@ -617,10 +629,23 @@ function BranchListView({ branches, loading, showRegister, setShowRegister, newB
 // ── Branch detail ─────────────────────────────────────────────────────────────
 
 function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, loading,
-  onBack, onRefresh, onUpdateVehicleStatus, onDeleteVehicle, onDeleteAllVehicles, onUpdateUserStatus }) {
+  onBack, onRefresh, onUpdateVehicleStatus, onUpdateVehiclePlate, onDeleteVehicle, onDeleteAllVehicles, onUpdateUserStatus }) {
   const STATUSES = ['WAITING', 'ENTERED', 'TEMP_OUT', 'EXITED'];
   const [previewVehicle, setPreviewVehicle] = useState(null);
   const [statusFilter, setStatusFilter] = useState(null);
+  const [editingPlateId, setEditingPlateId] = useState(null);
+  const [editingPlateValue, setEditingPlateValue] = useState('');
+
+  function startEditingPlate(v) {
+    setEditingPlateId(v.id);
+    setEditingPlateValue(v.licensePlate || '');
+  }
+  function commitPlateEdit(vehicleId) {
+    const value = editingPlateValue.trim();
+    setEditingPlateId(null);
+    if (!value) return;
+    onUpdateVehiclePlate(vehicleId, value);
+  }
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
@@ -764,10 +789,28 @@ function BranchDetailView({ branch, vehicles, users, detailTab, setDetailTab, lo
                                 </div>
                               </td>
                               <td>
-                                {v.licensePlate ? (
-                                  <span style={{ fontWeight: 800, letterSpacing: '0.05em' }}>{v.licensePlate}</span>
+                                {editingPlateId === v.id ? (
+                                  <input
+                                    autoFocus
+                                    value={editingPlateValue}
+                                    onChange={e => setEditingPlateValue(e.target.value.toUpperCase())}
+                                    onBlur={() => commitPlateEdit(v.id)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') commitPlateEdit(v.id);
+                                      if (e.key === 'Escape') setEditingPlateId(null);
+                                    }}
+                                    style={{ fontWeight: 800, letterSpacing: '0.05em', fontFamily: 'monospace',
+                                      background: 'rgba(255,255,255,0.06)', border: '1px solid var(--accent-color)',
+                                      borderRadius: '4px', padding: '3px 6px', color: 'white', width: '110px' }}
+                                  />
+                                ) : v.licensePlate ? (
+                                  <span onClick={() => startEditingPlate(v)} title="Click to edit"
+                                    style={{ fontWeight: 800, letterSpacing: '0.05em', cursor: 'pointer' }}>
+                                    {v.licensePlate}
+                                  </span>
                                 ) : (
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                  <div onClick={() => startEditingPlate(v)} title="Click to enter manually"
+                                    style={{ display: 'flex', flexDirection: 'column', gap: '3px', cursor: 'pointer' }}>
                                     <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '0.65rem',
                                       fontWeight: 700, background: 'rgba(234,179,8,0.1)', color: '#eab308',
                                       border: '1px solid rgba(234,179,8,0.2)', display: 'inline-block', width: 'fit-content' }}>
