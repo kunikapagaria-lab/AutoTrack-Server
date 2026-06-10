@@ -1477,15 +1477,19 @@ def export_csv(
         cutoff = now - timedelta(days=days)
         rows = [v for v in rows if datetime.fromisoformat(v.timestamp.replace("Z", "+00:00")) >= cutoff]
 
+    # Stored timestamps are UTC; the container has no local TZ configured,
+    # so convert to IST (UTC+5:30) for display in the exported report.
+    IST = timezone(timedelta(hours=5, minutes=30))
+
     headers = ["ID", "License Plate Number", "Status", "Timestamp", "Activity Flow"]
     lines = [",".join(headers)]
     for v in rows:
         history_arr = v.history or [{"status": "ENTERED", "timestamp": v.timestamp}]
         history_str = " >> ".join(
-            f"{h.get('status','')} ({datetime.fromisoformat(h['timestamp'].replace('Z','+00:00')).strftime('%d %b %H:%M')})"
+            f"{h.get('status','')} ({datetime.fromisoformat(h['timestamp'].replace('Z','+00:00')).astimezone(IST).strftime('%d %b %H:%M')})"
             for h in history_arr
         )
-        ts = datetime.fromisoformat(v.timestamp.replace("Z", "+00:00")).strftime("%d/%m/%Y %I:%M %p")
+        ts = datetime.fromisoformat(v.timestamp.replace("Z", "+00:00")).astimezone(IST).strftime("%d/%m/%Y %I:%M %p")
         line = [
             f'"{v.id}"',
             f'"{v.license_plate or "PENDING"}"',
