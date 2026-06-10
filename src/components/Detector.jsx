@@ -108,6 +108,15 @@ function computeIoU(bbox1, bbox2) {
 
 let _tid = 1;
 
+// Only these COCO-SSD classes count as "vehicles" for tripwire tracking —
+// excludes furniture/objects (bench, chair, etc.) that COCO-SSD can mistake
+// for cars when stationary near a line.
+const VEHICLE_CLASSES = new Set(['car', 'motorcycle', 'bus', 'truck']);
+
+// Centroid must clear this many px past a line before it counts toward a
+// crossing — filters out per-frame jitter on stationary vehicles/objects.
+const LINE_DEAD_ZONE_PX = 10;
+
 // ─── component ──────────────────────────────────────────────────────────────
 
 export default function Detector() {
@@ -134,6 +143,8 @@ export default function Detector() {
   const [isRTSP,         setIsRTSP]        = useState(false);
   const [isLooping,      setIsLooping]     = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [rtspRetryKey,   setRtspRetryKey]  = useState(0);
+  const rtspRetryTimerRef = useRef(null);
 
   const {
     addVehicle, vehicles, updateVehicle, updateVehicleStatus, removeVehicle,
@@ -276,8 +287,23 @@ export default function Detector() {
     if (isMonitoring) {
       setIsMonitoring(false); setIsRTSP(false); setIsVideoPlaying(false); stopWebcam();
       if (videoRef.current) { videoRef.current.pause(); videoRef.current.src = ''; }
+      if (rtspRetryTimerRef.current) { clearTimeout(rtspRetryTimerRef.current); rtspRetryTimerRef.current = null; }
     } else fileInputRef.current.click();
   }
+
+  // RTSP MJPEG stream dropped — retry by reloading the <img> src after a short
+  // delay instead of leaving a broken-image icon until the user reconnects manually.
+  function handleRtspError() {
+    if (!isRTSP || rtspRetryTimerRef.current) return;
+    rtspRetryTimerRef.current = setTimeout(() => {
+      rtspRetryTimerRef.current = null;
+      setRtspRetryKey(k => k + 1);
+    }, 2000);
+  }
+
+  useEffect(() => () => {
+    if (rtspRetryTimerRef.current) clearTimeout(rtspRetryTimerRef.current);
+  }, []);
 
   // ── detection loop ──
   useEffect(() => {
@@ -290,10 +316,15 @@ export default function Detector() {
 
     trackersRef.current = [];
 
-    function getSideOfLine(x, y, lineObj, canvasWidth, canvasHeight) {
+    // Signed perpendicular distance (px) from (x,y) to the line. Used with a
+    // dead zone so jitter on stationary objects near a line doesn't register
+    // as a crossing — the centroid must clear the zone on both sides.
+    function getLineDist(x, y, lineObj, canvasWidth, canvasHeight) {
       const ly1 = canvasHeight * lineObj.left;
       const ly2 = canvasHeight * lineObj.right;
-      return (canvasWidth * (y - ly1) - (ly2 - ly1) * x) > 0;
+      const raw  = canvasWidth * (y - ly1) - (ly2 - ly1) * x;
+      const norm = Math.sqrt(canvasWidth * canvasWidth + (ly2 - ly1) * (ly2 - ly1)) || 1;
+      return raw / norm;
     }
 
     function drawLine(lineObj, color, tag, lbl) {
@@ -348,7 +379,7 @@ export default function Detector() {
         }
 
         const cars = preds
-          .filter(p => p.class !== 'person')
+          .filter(p => VEHICLE_CLASSES.has(p.class))
           .map(p => ({
             ...p,
             rawClass: p.class,
@@ -380,6 +411,7 @@ export default function Detector() {
                 cx: car.cx, cy: car.cy, prevCx: null, prevCy: null,
                 bbox: car.bbox,
                 l1Crossed: false, l2Crossed: false,
+                side1: null, side2: null,
                 firstLine: null,
                 triggered: false,
                 frameBuffer: [],
@@ -391,19 +423,29 @@ export default function Detector() {
           matchedIds.add(t.id);
 
           // ── line crossing ──
-          if (t.prevCy !== null && !t.triggered) {
-            const curL1 = getSideOfLine(car.cx, car.cy, line1Ref.current, canvas.width, canvas.height);
-            const preL1 = getSideOfLine(t.prevCx, t.prevCy, line1Ref.current, canvas.width, canvas.height);
-            const curL2 = getSideOfLine(car.cx, car.cy, line2Ref.current, canvas.width, canvas.height);
-            const preL2 = getSideOfLine(t.prevCx, t.prevCy, line2Ref.current, canvas.width, canvas.height);
+          // Track a "confirmed side" per line, only updated once the centroid
+          // is more than LINE_DEAD_ZONE_PX away from the line. A crossing only
+          // registers when the confirmed side actually flips — jitter within
+          // the dead zone (e.g. a parked car sitting near a line) is ignored.
+          if (!t.triggered) {
+            const dist1 = getLineDist(car.cx, car.cy, line1Ref.current, canvas.width, canvas.height);
+            const dist2 = getLineDist(car.cx, car.cy, line2Ref.current, canvas.width, canvas.height);
 
-            if (!t.l1Crossed && curL1 !== preL1) {
-              t.l1Crossed = true;
-              if (t.firstLine === null) t.firstLine = 1;
+            if (Math.abs(dist1) > LINE_DEAD_ZONE_PX) {
+              const side = dist1 > 0 ? 1 : -1;
+              if (t.side1 !== null && t.side1 !== side && !t.l1Crossed) {
+                t.l1Crossed = true;
+                if (t.firstLine === null) t.firstLine = 1;
+              }
+              t.side1 = side;
             }
-            if (!t.l2Crossed && curL2 !== preL2) {
-              t.l2Crossed = true;
-              if (t.firstLine === null) t.firstLine = 2;
+            if (Math.abs(dist2) > LINE_DEAD_ZONE_PX) {
+              const side = dist2 > 0 ? 1 : -1;
+              if (t.side2 !== null && t.side2 !== side && !t.l2Crossed) {
+                t.l2Crossed = true;
+                if (t.firstLine === null) t.firstLine = 2;
+              }
+              t.side2 = side;
             }
           }
 
@@ -700,8 +742,8 @@ export default function Detector() {
         <video ref={videoRef} playsInline muted loop={isLooping}
           style={{ display: (isMonitoring && !isRTSP) ? 'block' : 'none' }} />
         <img ref={imageRef}
-          src={isRTSP ? `${_API}/video-feed` : 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}
-          alt="RTSP" crossOrigin="anonymous"
+          src={isRTSP ? `${_API}/video-feed?retry=${rtspRetryKey}` : 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}
+          alt="RTSP" crossOrigin="anonymous" onError={handleRtspError}
           style={{ display: (isMonitoring && isRTSP) ? 'block' : 'none', width: '100%', height: 'auto', background: '#000', borderRadius: '12px' }}
         />
 

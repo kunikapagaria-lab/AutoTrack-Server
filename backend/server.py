@@ -1773,15 +1773,18 @@ def get_camera(url: str) -> VideoCamera:
         return _camera_registry[url]
 
 
-def gen_frames(url: str):
+async def gen_frames(url: str):
+    """Async generator so this doesn't permanently pin an anyio threadpool
+    worker for the lifetime of the stream (a sync generator with time.sleep
+    would). Only the actual JPEG encode is offloaded to a thread."""
     camera = get_camera(url)
     log.info("New MJPEG client connected")
     while True:
-        frame_bytes = camera.get_jpeg()
+        frame_bytes = await asyncio.to_thread(camera.get_jpeg)
         if frame_bytes:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-        time.sleep(0.03)
+        await asyncio.sleep(0.03)
 
 
 @app.get("/video-feed")
