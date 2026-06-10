@@ -888,6 +888,10 @@ def postprocess_text(text):
     return ''.join(corrected)
 
 
+# Shortest valid Indian plate format is 9 chars (e.g. "AA11A1111").
+# OCR reads shorter than this can't be real plates.
+MIN_PLATE_LENGTH = 9
+
 _PLATE_PATTERNS_QUICK = [
     re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}$'),
     re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1}[0-9]{4}$'),
@@ -948,12 +952,18 @@ def select_best_result(candidates):
     if valid_candidates:
         valid_candidates.sort(key=lambda x: x[1], reverse=True)
         best_text, best_conf = valid_candidates[0]
-    elif all_preds:
-        all_preds.sort(key=lambda x: x['conf'], reverse=True)
-        best_text = all_preds[0]['cleaned']
-        best_conf = all_preds[0]['conf']
     else:
-        best_text, best_conf = '', 0.0
+        # No candidate matched a full plate pattern — fall back to the
+        # highest-confidence read, but reject anything shorter than the
+        # shortest valid plate format (9 chars, e.g. "AA11A1111").
+        # Without this, short OCR misreads (e.g. "7E") get reported as plates.
+        long_enough = [p for p in all_preds if len(p['cleaned']) >= MIN_PLATE_LENGTH]
+        if long_enough:
+            long_enough.sort(key=lambda x: x['conf'], reverse=True)
+            best_text = long_enough[0]['cleaned']
+            best_conf = long_enough[0]['conf']
+        else:
+            best_text, best_conf = '', 0.0
     return best_text, best_conf, all_preds
 
 

@@ -17,7 +17,7 @@ export function useFusionQueue() {
   const recentPlates = useRef(new Map());
 
   // Called by HighCameraDetector when a vehicle crosses the plate zone
-  const addTrigger = useCallback(({ trackId, direction, vehicleId, imageUrlPromise, confidence, vehicleType }) => {
+  const addTrigger = useCallback(({ trackId, direction, vehicleId, imageUrlPromise, highCamPlatePromise, confidence, vehicleType }) => {
     const now = Date.now();
 
     // Global cooldown
@@ -51,7 +51,8 @@ export function useFusionQueue() {
       triggeredAt:    now,
       direction,
       vehicleId,
-      imageUrlPromise: imageUrlPromise || null,
+      imageUrlPromise:      imageUrlPromise || null,
+      highCamPlatePromise:  highCamPlatePromise || null,
       resolved:        false,
     });
   }, [addVehicle]);
@@ -71,23 +72,40 @@ export function useFusionQueue() {
     if (!best) return;
 
     best.resolved = true;
-    const { vehicleId, direction, imageUrlPromise } = best;
+    const { vehicleId, direction, imageUrlPromise, highCamPlatePromise } = best;
     // Await the upload that started at trigger time — OCR always takes longer so this is resolved
     const triggerImageUrl = imageUrlPromise ? (await imageUrlPromise) : null;
 
+    let finalPlateText     = plateText;
+    let finalConfidence    = confidence;
+    let finalPlateImageUrl = plateImageUrl;
+    let finalDetectionLog  = detectionLog || [];
+
+    // Low camera came back empty — fall back to the plate read from the
+    // high camera's own trigger frame before giving up.
+    if (!finalPlateText && highCamPlatePromise) {
+      const highCamResult = await highCamPlatePromise;
+      if (highCamResult?.found && highCamResult?.plate_text) {
+        finalPlateText     = highCamResult.plate_text;
+        finalConfidence    = highCamResult.ocr_confidence || 0;
+        finalPlateImageUrl = highCamResult.plate_url || null;
+        finalDetectionLog  = [...finalDetectionLog, ...(highCamResult.detection_log || [])];
+      }
+    }
+
     // No plate found — leave in WAITING for manual entry
-    if (!plateText) {
-      updateVehicle(vehicleId, { plateStatus: 'not_found', detectionLog: detectionLog || [] });
+    if (!finalPlateText) {
+      updateVehicle(vehicleId, { plateStatus: 'not_found', detectionLog: finalDetectionLog });
       return;
     }
 
-    const upper = plateText.toUpperCase();
+    const upper = finalPlateText.toUpperCase();
 
     // Duplicate plate guard
     const now = Date.now();
     const lastSeen = recentPlates.current.get(upper);
     if (lastSeen && (now - lastSeen) < DUPLICATE_WINDOW_MS) {
-      updateVehicle(vehicleId, { plateStatus: 'duplicate', detectionLog: detectionLog || [] });
+      updateVehicle(vehicleId, { plateStatus: 'duplicate', detectionLog: finalDetectionLog });
       return;
     }
     recentPlates.current.set(upper, now);
@@ -114,18 +132,18 @@ export function useFusionQueue() {
           // Same plate already in workshop — hold in WAITING for manual plate entry
           updateVehicle(vehicleId, {
             licensePlate:  upper,
-            plateImageUrl,
+            plateImageUrl: finalPlateImageUrl,
             plateStatus:   'duplicate',
-            detectionLog:  detectionLog || [],
+            detectionLog:  finalDetectionLog,
           });
         } else {
           updateVehicle(vehicleId, {
             licensePlate:     upper,
-            plateImageUrl,
+            plateImageUrl:    finalPlateImageUrl,
             plateStatus:      'found',
             pendingDirection: null,
-            confidence,
-            detectionLog:     detectionLog || [],
+            confidence:       finalConfidence,
+            detectionLog:     finalDetectionLog,
           });
           updateVehicleStatus(vehicleId, 'ENTERED', triggerImageUrl);
         }
@@ -142,9 +160,9 @@ export function useFusionQueue() {
       } else {
         updateVehicle(vehicleId, {
           licensePlate:  upper,
-          plateImageUrl,
+          plateImageUrl: finalPlateImageUrl,
           plateStatus:   'not_found',
-          detectionLog:  detectionLog || [],
+          detectionLog:  finalDetectionLog,
         });
       }
     }

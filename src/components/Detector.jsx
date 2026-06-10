@@ -108,10 +108,10 @@ function computeIoU(bbox1, bbox2) {
 
 let _tid = 1;
 
-// Only these COCO-SSD classes count as "vehicles" for tripwire tracking —
-// excludes furniture/objects (bench, chair, etc.) that COCO-SSD can mistake
-// for cars when stationary near a line.
-const VEHICLE_CLASSES = new Set(['car', 'motorcycle', 'bus', 'truck']);
+// Only "car" counts for tripwire tracking — excludes motorcycles, buses,
+// trucks, and furniture/objects (bench, chair, etc.) that COCO-SSD can
+// mistake for cars when stationary near a line.
+const VEHICLE_CLASSES = new Set(['car']);
 
 // Centroid must clear this many px past a line before it counts toward a
 // crossing — filters out per-frame jitter on stationary vehicles/objects.

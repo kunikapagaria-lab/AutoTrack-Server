@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { Camera, Upload, Wifi, RefreshCw, X } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
+import { fetchPlate } from '../utils/plateApi';
 
 const _API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -8,37 +9,26 @@ const BURST_FRAMES   = 5;
 const BURST_DURATION = 1500;
 const FRAME_INTERVAL = BURST_DURATION / (BURST_FRAMES - 1); // 375ms
 
-async function fetchPlate(imageDataUrl) {
-  try {
-    let blob;
-    if (imageDataUrl.startsWith('data:')) {
-      const [header, b64] = imageDataUrl.split(',');
-      const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
-      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-      blob = new Blob([bytes], { type: mime });
-    } else {
-      blob = await (await fetch(imageDataUrl)).blob();
-    }
-    const fd = new FormData();
-    fd.append('file', new File([blob], 'cap.jpg', { type: 'image/jpeg' }));
-    const token = localStorage.getItem('autotrack_access_token') || '';
-    const r = await fetch(`${_API}/detect-plate`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` },
-      body: fd,
-    });
-    return r.ok ? await r.json() : null;
-  } catch {
-    return null;
-  }
-}
+// Fraction of the frame width kept, centered — the low camera sees the full
+// parking area, but only vehicles passing through this center lane should be
+// read. Parked cars sitting near the left/right edges fall outside this crop
+// and are never sent for OCR.
+const CENTER_CROP_RATIO = 0.45;
 
+// Returns the cropped (center-lane) frame plus its center coordinates, used
+// as a hint for the backend to pick the right plate if more than one is
+// still visible within the crop.
 function captureFrame(source, isRTSP) {
+  const fullW = isRTSP ? source.naturalWidth  : source.videoWidth;
+  const fullH = isRTSP ? source.naturalHeight : source.videoHeight;
+  const cropW = fullW * CENTER_CROP_RATIO;
+  const cropX = (fullW - cropW) / 2;
+
   const c = document.createElement('canvas');
-  c.width  = isRTSP ? source.naturalWidth  : source.videoWidth;
-  c.height = isRTSP ? source.naturalHeight : source.videoHeight;
-  c.getContext('2d').drawImage(source, 0, 0);
-  return c.toDataURL('image/jpeg', 0.85);
+  c.width  = cropW;
+  c.height = fullH;
+  c.getContext('2d').drawImage(source, cropX, 0, cropW, fullH, 0, 0, cropW, fullH);
+  return { dataUrl: c.toDataURL('image/jpeg', 0.85), cx: cropW / 2, cy: fullH / 2 };
 }
 
 const toAbsUrl = (url) => {
@@ -117,7 +107,7 @@ const LowCameraFeed = forwardRef(function LowCameraFeed({ onPlateResult }, ref) 
       let best = null;
       const log = [];
       for (const frame of frames) {
-        const result = await fetchPlate(frame);
+        const result = await fetchPlate(frame.dataUrl, frame.cx, frame.cy);
         if (result) log.push(result);
         if (result?.found) {
           const conf = result.ocr_confidence || 0;
