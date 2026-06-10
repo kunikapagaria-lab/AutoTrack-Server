@@ -9,26 +9,19 @@ const BURST_FRAMES   = 5;
 const BURST_DURATION = 1500;
 const FRAME_INTERVAL = BURST_DURATION / (BURST_FRAMES - 1); // 375ms
 
-// Fraction of the frame width kept, centered — the low camera sees the full
-// parking area, but only vehicles passing through this center lane should be
-// read. Parked cars sitting near the left/right edges fall outside this crop
-// and are never sent for OCR.
-const CENTER_CROP_RATIO = 0.45;
-
-// Returns the cropped (center-lane) frame plus its center coordinates, used
-// as a hint for the backend to pick the right plate if more than one is
-// still visible within the crop.
+// Returns the full frame plus its center coordinates — the passing vehicle's
+// plate is usually somewhere near frame-center, used as a hint for the
+// backend to pick the right plate when more than one is visible. (A center
+// crop was tried here but the passing lane shifts left/right too much, so
+// the crop was cutting the plate out of frame entirely.)
 function captureFrame(source, isRTSP) {
-  const fullW = isRTSP ? source.naturalWidth  : source.videoWidth;
-  const fullH = isRTSP ? source.naturalHeight : source.videoHeight;
-  const cropW = fullW * CENTER_CROP_RATIO;
-  const cropX = (fullW - cropW) / 2;
-
+  const w = isRTSP ? source.naturalWidth  : source.videoWidth;
+  const h = isRTSP ? source.naturalHeight : source.videoHeight;
   const c = document.createElement('canvas');
-  c.width  = cropW;
-  c.height = fullH;
-  c.getContext('2d').drawImage(source, cropX, 0, cropW, fullH, 0, 0, cropW, fullH);
-  return { dataUrl: c.toDataURL('image/jpeg', 0.85), cx: cropW / 2, cy: fullH / 2 };
+  c.width  = w;
+  c.height = h;
+  c.getContext('2d').drawImage(source, 0, 0);
+  return { dataUrl: c.toDataURL('image/jpeg', 0.85), cx: w / 2, cy: h / 2 };
 }
 
 const toAbsUrl = (url) => {
