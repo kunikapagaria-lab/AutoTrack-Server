@@ -5,6 +5,8 @@ import time
 import subprocess
 import urllib.request
 
+API_BASE = 'http://localhost/api'
+
 # When frozen by PyInstaller, executable directory is the install folder
 if getattr(sys, 'frozen', False):
     INSTALL_DIR = os.path.dirname(sys.executable)
@@ -36,6 +38,26 @@ def start_containers():
         )
     except Exception as e:
         print(f"Failed to start containers: {e}")
+
+
+def record_logout(window):
+    """Called when the app window is closing. The frontend's beforeunload
+    handler relies on a keepalive fetch that WebView2 doesn't reliably
+    finish before the process tears down, so the logout never reaches the
+    backend. Read the access token directly from the page (still alive at
+    this point) and call /logout synchronously before the window closes."""
+    try:
+        token = window.evaluate_js("localStorage.getItem('autotrack_access_token')")
+        if not token:
+            return
+        req = urllib.request.Request(
+            f'{API_BASE}/logout',
+            method='POST',
+            headers={'Authorization': f'Bearer {token}'},
+        )
+        urllib.request.urlopen(req, timeout=3)
+    except Exception:
+        pass
 
 
 def wait_for_app(window):
@@ -147,6 +169,7 @@ def main():
     )
 
     threading.Thread(target=wait_for_app, args=(window,), daemon=True).start()
+    window.events.closing += lambda: record_logout(window)
 
     webview.start(debug=False)
 
