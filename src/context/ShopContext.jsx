@@ -362,7 +362,7 @@ export function ShopProvider({ children }) {
   // session check calls /cancel-auto-logout. On close the flag is wiped with
   // sessionStorage, so no cancel fires and the pending logout is confirmed after 10 s.
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.role === 'superadmin') return;
     const handleUnload = () => {
       const token = getAccessToken();
       if (!token) return;
@@ -380,7 +380,7 @@ export function ShopProvider({ children }) {
   // ── Heartbeat — lets the backend detect a desktop app close/crash that
   // never sends a logout request, by noticing when heartbeats stop arriving.
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.role === 'superadmin') return;
     const sendHeartbeat = () => {
       const token = getAccessToken();
       if (!token) return;

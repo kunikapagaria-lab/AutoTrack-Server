@@ -285,6 +285,10 @@ async def refresh(payload: RefreshRequest):
         raise HTTPException(status_code=401, detail='User not found')
     return {'access_token': create_access_token(data.get('sub')), 'token_type': 'bearer'}
 
+@app.post('/ping')
+async def ping(_: dict = Depends(get_current_user)):
+    return {'ok': True}
+
 @app.get('/admin/auth-logs')
 async def get_auth_logs(limit: int = 200, _: dict = Depends(get_current_user)):
     conn = sqlite3.connect(DB_PATH)

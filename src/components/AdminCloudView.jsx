@@ -341,7 +341,10 @@ export default function AdminCloudView({ onLogout }) {
     if (endDate)   params.set('end_date', endDate);
     const qs = params.toString();
     authFetch(`${API_URL}/vehicles/export${qs ? `?${qs}` : ''}`)
-      .then(r => r.blob())
+      .then(r => {
+        if (!r.ok) throw new Error('Failed');
+        return r.blob();
+      })
       .then(blob => {
         const url = URL.createObjectURL(blob);
         const a   = document.createElement('a');
@@ -349,7 +352,8 @@ export default function AdminCloudView({ onLogout }) {
         a.download = `report_${new Date().toISOString().split('T')[0]}.csv`;
         a.click();
         URL.revokeObjectURL(url);
-      });
+      })
+      .catch(() => alert('Failed to export report'));
   };
 
   const copyKey = (key) => {
@@ -435,13 +439,6 @@ export default function AdminCloudView({ onLogout }) {
                 onLoadBranches={loadBranches}
                 onCopyKey={copyKey}
                 onDeleteBranch={(b) => { setDeletingBranch(b); setConfirmDeleteBranch(true); }}
-                exportModal={exportModal}
-                setExportModal={setExportModal}
-                exportStartDate={exportStartDate}
-                setExportStartDate={setExportStartDate}
-                exportEndDate={exportEndDate}
-                setExportEndDate={setExportEndDate}
-                onDownloadReport={downloadReport}
               />
         )}
 
@@ -507,6 +504,75 @@ export default function AdminCloudView({ onLogout }) {
           </div>
         </div>
       )}
+
+      {/* Export report modal */}
+      {exportModal && (
+        <div onClick={() => setExportModal(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)',
+            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div onClick={e => e.stopPropagation()} className="panel animate-scale-in"
+            style={{ width: '100%', maxWidth: '380px', borderRadius: '20px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ fontWeight: 900, fontSize: '0.95rem', color: 'white' }}>Export Report</h3>
+              <button onClick={() => setExportModal(null)}
+                style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: 'white',
+                  padding: '6px', borderRadius: '50%', cursor: 'pointer' }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ padding: '1.5rem' }}>
+              <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
+                textTransform: 'uppercase', marginBottom: '6px' }}>Branch</div>
+              <select value={exportModal.branchId || ''}
+                onChange={e => {
+                  const id = e.target.value || null;
+                  const b  = branches.find(b => b.id === id);
+                  setExportModal({ branchId: id, branchName: b ? b.name : 'All Branches' });
+                }}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px',
+                  background: 'rgba(255,255,255,0.05)', color: 'white',
+                  border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
+                  fontSize: '0.9rem', outline: 'none', marginBottom: '1rem' }}>
+                <option value="">All Branches</option>
+                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+
+              <div style={{ display: 'flex', gap: '10px', marginBottom: '1.25rem' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
+                    textTransform: 'uppercase', marginBottom: '6px' }}>From</div>
+                  <input type="date" value={exportStartDate} onChange={e => setExportStartDate(e.target.value)}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px',
+                      background: 'rgba(255,255,255,0.05)', color: 'white',
+                      border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
+                      fontSize: '0.85rem', outline: 'none', colorScheme: 'dark' }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
+                    textTransform: 'uppercase', marginBottom: '6px' }}>To</div>
+                  <input type="date" value={exportEndDate} onChange={e => setExportEndDate(e.target.value)}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px',
+                      background: 'rgba(255,255,255,0.05)', color: 'white',
+                      border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
+                      fontSize: '0.85rem', outline: 'none', colorScheme: 'dark' }} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => setExportModal(null)} className="btn" style={{ flex: 1, padding: '10px' }}>Cancel</button>
+                <button onClick={() => {
+                    downloadReport({ branchId: exportModal.branchId, startDate: exportStartDate, endDate: exportEndDate });
+                    setExportModal(null);
+                  }}
+                  className="btn primary" style={{ flex: 2, padding: '10px' }}>
+                  <Download size={14} /> Export CSV
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -515,8 +581,7 @@ export default function AdminCloudView({ onLogout }) {
 
 function BranchListView({ branches, loading, showRegister, setShowRegister, newBranchName, setNewBranchName,
   registering, newBranchResult, setNewBranchResult, copiedKey,
-  onSelectBranch, onRegisterBranch, onLoadBranches, onCopyKey, onDeleteBranch,
-  exportModal, setExportModal, exportStartDate, setExportStartDate, exportEndDate, setExportEndDate, onDownloadReport }) {
+  onSelectBranch, onRegisterBranch, onLoadBranches, onCopyKey, onDeleteBranch }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -638,74 +703,6 @@ function BranchListView({ branches, loading, showRegister, setShowRegister, newB
                     className="btn primary" style={{ width: '100%', padding: '10px' }}>Done</button>
                 </>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {exportModal && (
-        <div onClick={() => setExportModal(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)',
-            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div onClick={e => e.stopPropagation()} className="panel animate-scale-in"
-            style={{ width: '100%', maxWidth: '380px', borderRadius: '20px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ fontWeight: 900, fontSize: '0.95rem', color: 'white' }}>Export Report</h3>
-              <button onClick={() => setExportModal(null)}
-                style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: 'white',
-                  padding: '6px', borderRadius: '50%', cursor: 'pointer' }}>
-                <X size={16} />
-              </button>
-            </div>
-            <div style={{ padding: '1.5rem' }}>
-              <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
-                textTransform: 'uppercase', marginBottom: '6px' }}>Branch</div>
-              <select value={exportModal.branchId || ''}
-                onChange={e => {
-                  const id = e.target.value || null;
-                  const b  = branches.find(b => b.id === id);
-                  setExportModal({ branchId: id, branchName: b ? b.name : 'All Branches' });
-                }}
-                style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px',
-                  background: 'rgba(255,255,255,0.05)', color: 'white',
-                  border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
-                  fontSize: '0.9rem', outline: 'none', marginBottom: '1rem' }}>
-                <option value="">All Branches</option>
-                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-
-              <div style={{ display: 'flex', gap: '10px', marginBottom: '1.25rem' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
-                    textTransform: 'uppercase', marginBottom: '6px' }}>From</div>
-                  <input type="date" value={exportStartDate} onChange={e => setExportStartDate(e.target.value)}
-                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px',
-                      background: 'rgba(255,255,255,0.05)', color: 'white',
-                      border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
-                      fontSize: '0.85rem', outline: 'none', colorScheme: 'dark' }} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-secondary)',
-                    textTransform: 'uppercase', marginBottom: '6px' }}>To</div>
-                  <input type="date" value={exportEndDate} onChange={e => setExportEndDate(e.target.value)}
-                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px',
-                      background: 'rgba(255,255,255,0.05)', color: 'white',
-                      border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
-                      fontSize: '0.85rem', outline: 'none', colorScheme: 'dark' }} />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={() => setExportModal(null)} className="btn" style={{ flex: 1, padding: '10px' }}>Cancel</button>
-                <button onClick={() => {
-                    onDownloadReport({ branchId: exportModal.branchId, startDate: exportStartDate, endDate: exportEndDate });
-                    setExportModal(null);
-                  }}
-                  className="btn primary" style={{ flex: 2, padding: '10px' }}>
-                  <Download size={14} /> Export CSV
-                </button>
-              </div>
             </div>
           </div>
         </div>
