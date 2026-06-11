@@ -435,6 +435,13 @@ export default function AdminCloudView({ onLogout }) {
                 onLoadBranches={loadBranches}
                 onCopyKey={copyKey}
                 onDeleteBranch={(b) => { setDeletingBranch(b); setConfirmDeleteBranch(true); }}
+                exportModal={exportModal}
+                setExportModal={setExportModal}
+                exportStartDate={exportStartDate}
+                setExportStartDate={setExportStartDate}
+                exportEndDate={exportEndDate}
+                setExportEndDate={setExportEndDate}
+                onDownloadReport={downloadReport}
               />
         )}
 
@@ -508,7 +515,8 @@ export default function AdminCloudView({ onLogout }) {
 
 function BranchListView({ branches, loading, showRegister, setShowRegister, newBranchName, setNewBranchName,
   registering, newBranchResult, setNewBranchResult, copiedKey,
-  onSelectBranch, onRegisterBranch, onLoadBranches, onCopyKey, onDeleteBranch }) {
+  onSelectBranch, onRegisterBranch, onLoadBranches, onCopyKey, onDeleteBranch,
+  exportModal, setExportModal, exportStartDate, setExportStartDate, exportEndDate, setExportEndDate, onDownloadReport }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -691,7 +699,7 @@ function BranchListView({ branches, loading, showRegister, setShowRegister, newB
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={() => setExportModal(null)} className="btn" style={{ flex: 1, padding: '10px' }}>Cancel</button>
                 <button onClick={() => {
-                    downloadReport({ branchId: exportModal.branchId, startDate: exportStartDate, endDate: exportEndDate });
+                    onDownloadReport({ branchId: exportModal.branchId, startDate: exportStartDate, endDate: exportEndDate });
                     setExportModal(null);
                   }}
                   className="btn primary" style={{ flex: 2, padding: '10px' }}>
