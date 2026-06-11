@@ -36,7 +36,7 @@ from slowapi.errors import RateLimitExceeded
 import httpx
 from ultralytics import YOLO
 
-from sqlalchemy import Column, String, Text, create_engine
+from sqlalchemy import Column, String, Text, create_engine, func
 from sqlalchemy.types import JSON as SQLJSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -315,6 +315,32 @@ async def _poll_commands():
                                 db.commit()
                         finally:
                             db.close()
+                elif cmd_type == 'merge_vehicles':
+                    survivor_id = payload.get('survivor_id')
+                    loser_id    = payload.get('loser_id')
+                    new_plate   = payload.get('license_plate')
+                    new_pstatus = payload.get('plate_status')
+                    new_history = payload.get('history')
+                    if survivor_id and loser_id:
+                        ts = datetime.now(timezone.utc).isoformat()
+                        db = Session_()
+                        try:
+                            survivor = db.query(VehicleORM).filter(VehicleORM.id == survivor_id).first()
+                            if survivor:
+                                if new_plate:
+                                    survivor.license_plate = new_plate
+                                if new_pstatus:
+                                    survivor.plate_status = new_pstatus
+                                if new_history is not None:
+                                    survivor.history = new_history
+                                survivor.status      = 'ENTERED'
+                                survivor.last_update = ts
+                            loser = db.query(VehicleORM).filter(VehicleORM.id == loser_id).first()
+                            if loser:
+                                db.delete(loser)
+                            db.commit()
+                        finally:
+                            db.close()
                 elif cmd_type == 'delete_vehicle':
                     vehicle_id = payload.get('vehicle_id')
                     if vehicle_id:
@@ -390,7 +416,6 @@ async def _sync_loop():
                 await _auto_discover_branch_id()
             await _flush_sync_queue()
             await _flush_user_sync_queue()
-            await _poll_commands()
             await _check_heartbeats()
         except Exception as e:
             log.error("Sync loop crashed: %s", e)
@@ -428,9 +453,97 @@ async def _auto_discover_branch_id():
     except Exception as e:
         log.warning("Startup branch_id discovery failed: %s", e)
 
+async def _full_vehicle_resync():
+    """
+    Pull the full vehicle list for this branch from SuperAdmin and make the
+    local vehicles table match it exactly. Runs once on startup, replacing
+    the old per-command cloud->branch polling (which ran every 5s but could
+    miss commands and let the branch drift out of sync).
+    """
+    config    = get_branch_config()
+    cloud_url = config.get('cloud_url', '').rstrip('/')
+    api_key   = config.get('cloud_api_key', '')
+    branch_id = config.get('branch_id', '')
+    if not all([cloud_url, api_key, branch_id]):
+        return
+
+    # Push any local changes up first so they aren't overwritten/deleted below.
+    for _ in range(5):
+        before = _sync_queue_depth()
+        await _flush_sync_queue()
+        if _sync_queue_depth() == before:
+            break
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f'{cloud_url}/sync/vehicles/snapshot',
+                headers={'X-Branch-Key': api_key},
+            )
+        if resp.status_code != 200:
+            log.warning("Vehicle snapshot fetch failed: HTTP %d", resp.status_code)
+            return
+        cloud_vehicles = resp.json().get('vehicles', [])
+    except Exception as e:
+        log.warning("Vehicle snapshot fetch failed: %s", e)
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    pending_ids = {r[0] for r in conn.execute("SELECT DISTINCT vehicle_id FROM sync_queue WHERE attempts < 10")}
+    conn.close()
+
+    db = Session_()
+    try:
+        existing = {v.id: v for v in db.query(VehicleORM).all()}
+        default_tenant_id = next(iter(existing.values())).tenant_id if existing else None
+        if default_tenant_id is None:
+            conn = sqlite3.connect(DB_PATH)
+            row  = conn.execute("SELECT email FROM users ORDER BY id LIMIT 1").fetchone()
+            conn.close()
+            default_tenant_id = ("u" + row[0]) if row else "u_unknown"
+
+        cloud_ids = set()
+        for cv in cloud_vehicles:
+            vid = cv['id']
+            if vid in pending_ids:
+                continue  # local has unsynced changes for this vehicle — leave it alone
+            cloud_ids.add(vid)
+            row = existing.get(vid)
+            if row is None:
+                row = VehicleORM(id=vid, tenant_id=default_tenant_id)
+                db.add(row)
+            row.license_plate     = cv.get('license_plate')
+            row.status            = cv.get('status') or 'WAITING'
+            row.image_url         = cv.get('image_url')
+            row.plate_image_url   = cv.get('plate_image_url')
+            row.history           = cv.get('history') or []
+            row.timestamp         = cv.get('timestamp') or datetime.now(timezone.utc).isoformat()
+            row.last_update       = cv.get('last_update')
+            row.pending_direction = cv.get('pending_direction')
+            row.plate_status      = cv.get('plate_status')
+            row.confidence        = cv.get('confidence')
+            row.direction         = cv.get('direction')
+
+        for vid, row in existing.items():
+            if vid not in cloud_ids and vid not in pending_ids:
+                db.delete(row)
+
+        db.commit()
+        log.info("Vehicle snapshot resync complete: %d vehicle(s) from SuperAdmin", len(cloud_vehicles))
+    finally:
+        db.close()
+
+def _sync_queue_depth() -> int:
+    conn  = sqlite3.connect(DB_PATH)
+    count = conn.execute("SELECT COUNT(*) FROM sync_queue WHERE attempts < 10").fetchone()[0]
+    conn.close()
+    return count
+
 @asynccontextmanager
 async def lifespan(_):
     await _auto_discover_branch_id()
+    await _full_vehicle_resync()
+    await _poll_commands()
     task = asyncio.create_task(_sync_loop())
     yield
     task.cancel()
@@ -1486,6 +1599,41 @@ def update_vehicle(
         setattr(row, field, val)
     db.commit()
     db.refresh(row)
+
+    # If this plate edit now duplicates another ENTERED vehicle's plate, merge
+    # the two records into the one with the most recent activity, instead of
+    # leaving two ENTERED entries for the same vehicle.
+    if "license_plate" in update_data and update_data["license_plate"] and row.status == 'ENTERED':
+        norm_plate = update_data["license_plate"].strip().upper()
+        dup = db.query(VehicleORM).filter(
+            VehicleORM.id != row.id,
+            VehicleORM.status == 'ENTERED',
+            func.upper(VehicleORM.license_plate) == norm_plate,
+        ).first()
+        if dup:
+            cur_activity = row.last_update or row.timestamp or ''
+            dup_activity = dup.last_update or dup.timestamp or ''
+            survivor, loser = (dup, row) if dup_activity > cur_activity else (row, dup)
+            ts = datetime.now(timezone.utc).isoformat()
+            merged_history = sorted(
+                (survivor.history or []) + (loser.history or []),
+                key=lambda h: h.get('timestamp', ''),
+            )
+            merged_history.append({'status': 'merged', 'timestamp': ts, 'note': f'Merged duplicate vehicle {loser.id}'})
+            survivor.license_plate = update_data["license_plate"]
+            if "plate_status" in update_data:
+                survivor.plate_status = update_data["plate_status"]
+            survivor.history     = merged_history
+            survivor.last_update = ts
+            survivor.status      = 'ENTERED'
+            loser_id = loser.id
+            db.delete(loser)
+            db.commit()
+            db.refresh(survivor)
+            enqueue_sync_event('update', survivor.id, vehicle_to_dict(survivor))
+            enqueue_sync_event('delete', loser_id, {'id': loser_id})
+            return vehicle_to_dict(survivor)
+
     # If this vehicle was never synced (was a transient placeholder), emit
     # 'create' now that it has reached a real status. Skip if still unresolved.
     still_placeholder = (row.status == 'WAITING' and row.plate_status == 'scanning')

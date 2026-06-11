@@ -445,6 +445,30 @@ async def sync_users(payload: UserSyncPayload, branch_id: str = Depends(verify_b
     conn.close()
     return {'ok': True, 'synced': len(payload.users)}
 
+# ── Full vehicle snapshot (branch pulls this on startup to resync) ────────────
+
+@app.get('/sync/vehicles/snapshot')
+async def get_vehicle_snapshot(branch_id: str = Depends(verify_branch_key)):
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute('''
+        SELECT id, license_plate, status, image_url, plate_image_url, history,
+               timestamp, last_update, pending_direction, plate_status,
+               confidence, direction
+        FROM vehicles WHERE branch_id = ?
+    ''', (branch_id,))
+    rows = c.fetchall()
+    conn.close()
+    cols = ['id', 'license_plate', 'status', 'image_url', 'plate_image_url', 'history',
+            'timestamp', 'last_update', 'pending_direction', 'plate_status',
+            'confidence', 'direction']
+    vehicles = []
+    for row in rows:
+        v = dict(zip(cols, row))
+        v['history'] = json.loads(v['history']) if v['history'] else []
+        vehicles.append(v)
+    return {'vehicles': vehicles}
+
 # ── Command queue (branch polls these, then confirms) ─────────────────────────
 
 @app.get('/sync/commands')
@@ -515,33 +539,80 @@ async def update_cloud_vehicle(
 
     conn = sqlite3.connect(DB_PATH)
     c    = conn.cursor()
-    c.execute('SELECT id FROM vehicles WHERE id = ? AND branch_id = ?', (vehicle_id, branch_id))
-    if not c.fetchone():
+    c.execute('SELECT status, history, last_update, timestamp FROM vehicles WHERE id = ? AND branch_id = ?', (vehicle_id, branch_id))
+    row = c.fetchone()
+    if not row:
         conn.close()
         raise HTTPException(status_code=404, detail='Vehicle not found')
+    cur_status, cur_history_json, cur_last_update, cur_timestamp = row
     ts = datetime.now(timezone.utc).isoformat()
 
-    if data.status is not None:
-        c.execute('UPDATE vehicles SET status = ?, last_update = ? WHERE id = ? AND branch_id = ?',
-                  (data.status, ts, vehicle_id, branch_id))
-        c.execute(
-            'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
-            (branch_id, 'update_vehicle_status', json.dumps({'vehicle_id': vehicle_id, 'status': data.status}), ts)
-        )
+    final_status = data.status if data.status is not None else cur_status
+    plate_status = (data.plate_status or 'found') if data.license_plate is not None else None
 
-    if data.license_plate is not None:
-        plate_status = data.plate_status or 'found'
-        c.execute('UPDATE vehicles SET license_plate = ?, plate_status = ?, last_update = ? WHERE id = ? AND branch_id = ?',
-                  (data.license_plate, plate_status, ts, vehicle_id, branch_id))
-        c.execute(
-            'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
-            (branch_id, 'update_vehicle_plate',
-             json.dumps({'vehicle_id': vehicle_id, 'license_plate': data.license_plate, 'plate_status': plate_status}), ts)
-        )
+    # If this plate edit now duplicates another ENTERED vehicle's plate, merge
+    # the two records into the one with the most recent activity, instead of
+    # leaving two ENTERED entries for the same vehicle.
+    merged = False
+    if data.license_plate is not None and final_status == 'ENTERED':
+        norm_plate = data.license_plate.strip().upper()
+        c.execute('''
+            SELECT id, history, last_update, timestamp FROM vehicles
+            WHERE branch_id = ? AND id != ? AND status = 'ENTERED' AND UPPER(license_plate) = ?
+        ''', (branch_id, vehicle_id, norm_plate))
+        dup = c.fetchone()
+        if dup:
+            dup_id, dup_history_json, dup_last_update, dup_timestamp = dup
+            dup_history = json.loads(dup_history_json) if dup_history_json else []
+            cur_history = json.loads(cur_history_json) if cur_history_json else []
+            cur_activity = cur_last_update or cur_timestamp or ''
+            dup_activity = dup_last_update or dup_timestamp or ''
+            if dup_activity > cur_activity:
+                survivor_id, survivor_history, loser_id, loser_history = dup_id, dup_history, vehicle_id, cur_history
+            else:
+                survivor_id, survivor_history, loser_id, loser_history = vehicle_id, cur_history, dup_id, dup_history
+
+            merged_history = sorted(survivor_history + loser_history, key=lambda h: h.get('timestamp', ''))
+            merged_history.append({'status': 'merged', 'timestamp': ts, 'note': f'Merged duplicate vehicle {loser_id}'})
+
+            c.execute('''
+                UPDATE vehicles SET license_plate = ?, plate_status = ?, status = 'ENTERED',
+                       history = ?, last_update = ? WHERE id = ? AND branch_id = ?
+            ''', (data.license_plate, plate_status, json.dumps(merged_history), ts, survivor_id, branch_id))
+            c.execute('DELETE FROM vehicles WHERE id = ? AND branch_id = ?', (loser_id, branch_id))
+            c.execute(
+                'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+                (branch_id, 'merge_vehicles', json.dumps({
+                    'survivor_id':    survivor_id,
+                    'loser_id':       loser_id,
+                    'license_plate':  data.license_plate,
+                    'plate_status':   plate_status,
+                    'history':        merged_history,
+                }), ts)
+            )
+            merged = True
+
+    if not merged:
+        if data.status is not None:
+            c.execute('UPDATE vehicles SET status = ?, last_update = ? WHERE id = ? AND branch_id = ?',
+                      (data.status, ts, vehicle_id, branch_id))
+            c.execute(
+                'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+                (branch_id, 'update_vehicle_status', json.dumps({'vehicle_id': vehicle_id, 'status': data.status}), ts)
+            )
+
+        if data.license_plate is not None:
+            c.execute('UPDATE vehicles SET license_plate = ?, plate_status = ?, last_update = ? WHERE id = ? AND branch_id = ?',
+                      (data.license_plate, plate_status, ts, vehicle_id, branch_id))
+            c.execute(
+                'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+                (branch_id, 'update_vehicle_plate',
+                 json.dumps({'vehicle_id': vehicle_id, 'license_plate': data.license_plate, 'plate_status': plate_status}), ts)
+            )
 
     conn.commit()
     conn.close()
-    return {'ok': True}
+    return {'ok': True, 'merged': merged}
 
 @app.delete('/vehicles/{vehicle_id}')
 async def delete_cloud_vehicle(
@@ -586,21 +657,49 @@ async def delete_all_branch_vehicles(branch_id: str, _: dict = Depends(get_curre
     return {'ok': True, 'deleted': len(vehicle_ids)}
 
 @app.get('/vehicles/export')
-async def export_all_vehicles(_: dict = Depends(get_current_user)):
+async def export_all_vehicles(
+    branch_id:  Optional[str] = None,
+    start_date: Optional[str] = None,  # YYYY-MM-DD, inclusive (IST)
+    end_date:   Optional[str] = None,  # YYYY-MM-DD, inclusive (IST)
+    _: dict = Depends(get_current_user),
+):
     conn = sqlite3.connect(DB_PATH)
     c    = conn.cursor()
-    c.execute('''
+
+    branch_name_filter = None
+    if branch_id:
+        c.execute('SELECT name FROM branches WHERE id = ?', (branch_id,))
+        row = c.fetchone()
+        branch_name_filter = row[0] if row else branch_id
+
+    query  = '''
         SELECT b.name, v.id, v.license_plate, v.status, v.timestamp,
                v.last_update, v.direction, v.history
         FROM vehicles v
         JOIN branches b ON v.branch_id = b.id
-        ORDER BY v.timestamp DESC
-    ''')
+    '''
+    params = []
+    if branch_id:
+        query += ' WHERE v.branch_id = ?'
+        params.append(branch_id)
+    query += ' ORDER BY v.timestamp DESC'
+    c.execute(query, params)
     rows = c.fetchall()
     conn.close()
+
+    IST      = timezone(timedelta(hours=5, minutes=30))
+    start_dt = datetime.strptime(start_date, '%Y-%m-%d').replace(tzinfo=IST) if start_date else None
+    end_dt   = (datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)).replace(tzinfo=IST) if end_date else None
+
     lines = ['Branch,Vehicle ID,License Plate,Status,Entry Time,Last Update,Direction,Activity Flow']
     for r in rows:
         branch_name, vid, plate, status, ts, lu, direction, history_json = r
+        if ts:
+            ts_dt = datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone(IST)
+            if start_dt and ts_dt < start_dt:
+                continue
+            if end_dt and ts_dt >= end_dt:
+                continue
         try:
             history = json.loads(history_json) if history_json else []
             flow    = ' >> '.join(f"{h['status']} ({h.get('timestamp','')[:16]})" for h in history)
@@ -609,10 +708,17 @@ async def export_all_vehicles(_: dict = Depends(get_current_user)):
         direction_label = {'INGRESS': 'In', 'EGRESS': 'Out'}.get(direction, '')
         lines.append(f'"{branch_name}","{vid}","{plate or "PENDING"}","{status or ""}","{ts or ""}","{lu or ""}","{direction_label}","{flow}"')
     csv_content = '\n'.join(lines)
+
+    name_parts = [branch_name_filter or 'consolidated']
+    if start_date or end_date:
+        name_parts.append(start_date or 'start')
+        name_parts.append(end_date or 'end')
+    filename = '_'.join(p.replace(' ', '_') for p in name_parts) + '_report.csv'
+
     return Response(
         content=csv_content,
         media_type='text/csv',
-        headers={'Content-Disposition': 'attachment; filename="consolidated_report.csv"'},
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
     )
 
 # ── User management (superadmin) ───────────────────────────────────────────────
