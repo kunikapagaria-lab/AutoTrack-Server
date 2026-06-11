@@ -268,7 +268,7 @@ export function ShopProvider({ children }) {
   };
 
   const loadVehicles = useCallback(() => {
-    if (!user) { setVehicles([]); return; }
+    if (!user || user.role === 'superadmin') { setVehicles([]); return; }
     setBackendError(null);
     apiFetch(`${API_URL}/vehicles`)
       .then(r => {
