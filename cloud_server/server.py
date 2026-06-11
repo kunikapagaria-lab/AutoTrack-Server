@@ -223,7 +223,9 @@ class ApproveUserPayload(BaseModel):
     action:        str  # 'approve' or 'reject'
 
 class VehicleStatusUpdateCloud(BaseModel):
-    status: str
+    status:        Optional[str] = None
+    license_plate: Optional[str] = None
+    plate_status:  Optional[str] = None
 
 class SuperadminCreate(BaseModel):
     username: str
@@ -506,8 +508,11 @@ async def update_cloud_vehicle(
     _: dict = Depends(get_current_user),
 ):
     valid_statuses = ('WAITING', 'ENTERED', 'TEMP_OUT', 'EXITED')
-    if data.status not in valid_statuses:
+    if data.status is not None and data.status not in valid_statuses:
         raise HTTPException(status_code=400, detail='Invalid status')
+    if data.status is None and data.license_plate is None:
+        raise HTTPException(status_code=400, detail='No fields to update')
+
     conn = sqlite3.connect(DB_PATH)
     c    = conn.cursor()
     c.execute('SELECT id FROM vehicles WHERE id = ? AND branch_id = ?', (vehicle_id, branch_id))
@@ -515,12 +520,25 @@ async def update_cloud_vehicle(
         conn.close()
         raise HTTPException(status_code=404, detail='Vehicle not found')
     ts = datetime.now(timezone.utc).isoformat()
-    c.execute('UPDATE vehicles SET status = ?, last_update = ? WHERE id = ? AND branch_id = ?',
-              (data.status, ts, vehicle_id, branch_id))
-    c.execute(
-        'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
-        (branch_id, 'update_vehicle_status', json.dumps({'vehicle_id': vehicle_id, 'status': data.status}), ts)
-    )
+
+    if data.status is not None:
+        c.execute('UPDATE vehicles SET status = ?, last_update = ? WHERE id = ? AND branch_id = ?',
+                  (data.status, ts, vehicle_id, branch_id))
+        c.execute(
+            'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+            (branch_id, 'update_vehicle_status', json.dumps({'vehicle_id': vehicle_id, 'status': data.status}), ts)
+        )
+
+    if data.license_plate is not None:
+        plate_status = data.plate_status or 'found'
+        c.execute('UPDATE vehicles SET license_plate = ?, plate_status = ?, last_update = ? WHERE id = ? AND branch_id = ?',
+                  (data.license_plate, plate_status, ts, vehicle_id, branch_id))
+        c.execute(
+            'INSERT INTO pending_commands (branch_id, command_type, payload, created_at) VALUES (?, ?, ?, ?)',
+            (branch_id, 'update_vehicle_plate',
+             json.dumps({'vehicle_id': vehicle_id, 'license_plate': data.license_plate, 'plate_status': plate_status}), ts)
+        )
+
     conn.commit()
     conn.close()
     return {'ok': True}
@@ -588,7 +606,8 @@ async def export_all_vehicles(_: dict = Depends(get_current_user)):
             flow    = ' >> '.join(f"{h['status']} ({h.get('timestamp','')[:16]})" for h in history)
         except Exception:
             flow = ''
-        lines.append(f'"{branch_name}","{vid}","{plate or "PENDING"}","{status or ""}","{ts or ""}","{lu or ""}","{direction or ""}","{flow}"')
+        direction_label = {'INGRESS': 'In', 'EGRESS': 'Out'}.get(direction, '')
+        lines.append(f'"{branch_name}","{vid}","{plate or "PENDING"}","{status or ""}","{ts or ""}","{lu or ""}","{direction_label}","{flow}"')
     csv_content = '\n'.join(lines)
     return Response(
         content=csv_content,

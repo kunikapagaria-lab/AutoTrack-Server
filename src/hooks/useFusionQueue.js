@@ -58,16 +58,21 @@ export function useFusionQueue() {
   }, [addVehicle]);
 
   // Called by LowCameraFeed when a burst OCR result is ready
-  const submitPlateResult = useCallback(async ({ plateText, confidence, plateImageUrl, burstStartTime, detectionLog }) => {
+  const submitPlateResult = useCallback(async ({ vehicleId: resultVehicleId, plateText, confidence, plateImageUrl, burstStartTime, detectionLog }) => {
     const unresolved = queue.current.filter(t => !t.resolved);
     if (unresolved.length === 0) return;
 
-    // Time-proximity match — find closest triggeredAt to burstStartTime, FIFO as tiebreaker
-    let best = null;
-    let bestDelta = Infinity;
-    for (const trigger of unresolved) {
-      const delta = Math.abs(trigger.triggeredAt - burstStartTime);
-      if (delta < bestDelta) { bestDelta = delta; best = trigger; }
+    // Match the burst back to the exact trigger that requested it, by vehicleId —
+    // avoids attributing this result to a different (nearby-in-time) vehicle when
+    // bursts get queued/delayed behind each other.
+    let best = unresolved.find(t => t.vehicleId === resultVehicleId) || null;
+    if (!best) {
+      // Fallback: closest triggeredAt to burstStartTime, FIFO as tiebreaker
+      let bestDelta = Infinity;
+      for (const trigger of unresolved) {
+        const delta = Math.abs(trigger.triggeredAt - burstStartTime);
+        if (delta < bestDelta) { bestDelta = delta; best = trigger; }
+      }
     }
     if (!best) return;
 
@@ -111,11 +116,14 @@ export function useFusionQueue() {
     recentPlates.current.set(upper, now);
 
     if (direction === 'INGRESS') {
+      // Match TEMP_OUT/WAITING (resume an open visit) or EXITED (same plate
+      // returning after a completed visit — reopen that row instead of
+      // creating a new one, so each plate keeps a single running record).
       const existing = vehiclesRef.current.find(v =>
         v.id !== vehicleId &&
         !v.pendingDirection &&
         v.licensePlate?.toUpperCase() === upper &&
-        (v.status === 'TEMP_OUT' || v.status === 'WAITING')
+        (v.status === 'TEMP_OUT' || v.status === 'WAITING' || v.status === 'EXITED')
       );
       if (existing) {
         updateVehicleStatus(existing.id, 'ENTERED', triggerImageUrl);

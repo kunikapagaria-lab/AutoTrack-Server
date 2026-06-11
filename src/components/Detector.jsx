@@ -117,6 +117,26 @@ const VEHICLE_CLASSES = new Set(['car']);
 // crossing — filters out per-frame jitter on stationary vehicles/objects.
 const LINE_DEAD_ZONE_PX = 10;
 
+// requestAnimationFrame is fully suspended by Chromium/WebView2 when the
+// window is minimized or hidden, which silently stops detection. setTimeout
+// keeps firing (throttled to ~1s when hidden) so detection survives minimize.
+const TICK_INTERVAL_MS = 200;
+
+// A line "crossing" only counts once the track's centroid has moved at
+// least this far from where the track was first seen — filters out a
+// parked car whose bbox jitters across a line's dead zone without the car
+// actually moving (which would otherwise log a false entry/exit, and can
+// repeat each time the track is lost/reacquired with a fresh ID).
+const MIN_DISPLACEMENT_PX = 20;
+
+// A track that hasn't crossed any line yet is dropped quickly if detection
+// is lost (likely noise). A track that already crossed one line but is still
+// waiting on the other (e.g. a car that parks mid-lane) is kept alive much
+// longer so a brief detection gap doesn't reset its progress and cause a
+// duplicate/misdirected trigger when the car is re-detected as a "new" track.
+const LOST_FRAMES_LIMIT     = 15;
+const LOST_FRAMES_PERSISTED = 100;
+
 // ─── component ──────────────────────────────────────────────────────────────
 
 export default function Detector() {
@@ -164,7 +184,7 @@ export default function Detector() {
       .catch(() => { if (alive) setError('Failed to load AI model'); });
     return () => {
       alive = false;
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      if (requestRef.current) clearTimeout(requestRef.current);
     };
   }, []);
 
@@ -349,13 +369,13 @@ export default function Detector() {
     }
 
     async function tick() {
-      if (busy) { if (isMonitoring) requestRef.current = requestAnimationFrame(tick); return; }
+      if (busy) { if (isMonitoring) requestRef.current = setTimeout(tick, TICK_INTERVAL_MS); return; }
       busy = true;
       try {
         const ready = isRTSP
           ? (source.naturalWidth > 0 && source.naturalHeight > 0)
           : (source.readyState >= 2 && source.videoWidth > 0);
-        if (!ready) { busy = false; if (isMonitoring) requestRef.current = requestAnimationFrame(tick); return; }
+        if (!ready) { busy = false; if (isMonitoring) requestRef.current = setTimeout(tick, TICK_INTERVAL_MS); return; }
 
         canvas.width  = isRTSP ? source.naturalWidth  : source.videoWidth;
         canvas.height = isRTSP ? source.naturalHeight : source.videoHeight;
@@ -409,8 +429,10 @@ export default function Detector() {
             : {
                 id: `t${_tid++}`,
                 cx: car.cx, cy: car.cy, prevCx: null, prevCy: null,
+                startCx: car.cx, startCy: car.cy,
                 bbox: car.bbox,
                 l1Crossed: false, l2Crossed: false,
+                l1FlipSeen: false, l2FlipSeen: false,
                 side1: null, side2: null,
                 firstLine: null,
                 triggered: false,
@@ -430,22 +452,47 @@ export default function Detector() {
           if (!t.triggered) {
             const dist1 = getLineDist(car.cx, car.cy, line1Ref.current, canvas.width, canvas.height);
             const dist2 = getLineDist(car.cx, car.cy, line2Ref.current, canvas.width, canvas.height);
+            const displaced = Math.hypot(car.cx - t.startCx, car.cy - t.startCy) > MIN_DISPLACEMENT_PX;
 
             if (Math.abs(dist1) > LINE_DEAD_ZONE_PX) {
               const side = dist1 > 0 ? 1 : -1;
-              if (t.side1 !== null && t.side1 !== side && !t.l1Crossed) {
-                t.l1Crossed = true;
-                if (t.firstLine === null) t.firstLine = 1;
+              if (t.side1 !== null && t.side1 !== side) {
+                if (!t.l1Crossed) {
+                  t.l1FlipSeen = true;
+                } else if (t.firstLine === 1 && !t.l2Crossed) {
+                  // Car backed back out over L1 before completing the L1→L2
+                  // pass — cancel the crossing instead of leaving it counted.
+                  t.l1Crossed = false;
+                  t.l1FlipSeen = false;
+                  t.firstLine = null;
+                  t.startCx = car.cx; t.startCy = car.cy;
+                }
               }
               t.side1 = side;
             }
+            if (t.l1FlipSeen && displaced && !t.l1Crossed) {
+              t.l1Crossed = true;
+              if (t.firstLine === null) t.firstLine = 1;
+            }
             if (Math.abs(dist2) > LINE_DEAD_ZONE_PX) {
               const side = dist2 > 0 ? 1 : -1;
-              if (t.side2 !== null && t.side2 !== side && !t.l2Crossed) {
-                t.l2Crossed = true;
-                if (t.firstLine === null) t.firstLine = 2;
+              if (t.side2 !== null && t.side2 !== side) {
+                if (!t.l2Crossed) {
+                  t.l2FlipSeen = true;
+                } else if (t.firstLine === 2 && !t.l1Crossed) {
+                  // Car backed back out over L2 before completing the L2→L1
+                  // pass — cancel the crossing instead of leaving it counted.
+                  t.l2Crossed = false;
+                  t.l2FlipSeen = false;
+                  t.firstLine = null;
+                  t.startCx = car.cx; t.startCy = car.cy;
+                }
               }
               t.side2 = side;
+            }
+            if (t.l2FlipSeen && displaced && !t.l2Crossed) {
+              t.l2Crossed = true;
+              if (t.firstLine === null) t.firstLine = 2;
             }
           }
 
@@ -617,18 +664,20 @@ export default function Detector() {
         for (const oldT of trackersRef.current) {
           if (!matchedIds.has(oldT.id)) {
             oldT.lostFrames = (oldT.lostFrames || 0) + 1;
-            if (oldT.lostFrames < 15) nextTrackers.push(oldT);
+            const lostLimit = (!oldT.triggered && (oldT.l1Crossed || oldT.l2Crossed))
+              ? LOST_FRAMES_PERSISTED : LOST_FRAMES_LIMIT;
+            if (oldT.lostFrames < lostLimit) nextTrackers.push(oldT);
           }
         }
 
         trackersRef.current = nextTrackers;
       } catch (e) { console.error('Detection error:', e); }
       busy = false;
-      if (isMonitoring) requestRef.current = requestAnimationFrame(tick);
+      if (isMonitoring) requestRef.current = setTimeout(tick, TICK_INTERVAL_MS);
     }
 
     tick();
-    return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
+    return () => { if (requestRef.current) clearTimeout(requestRef.current); };
   }, [isMonitoring, isRTSP, model, linesLocked]);
 
   // ── render ──

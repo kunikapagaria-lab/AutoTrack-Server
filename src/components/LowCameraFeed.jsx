@@ -70,11 +70,11 @@ const LowCameraFeed = forwardRef(function LowCameraFeed({ onPlateResult }, ref) 
     processingRef.current = true;
 
     while (burstQueue.current.length > 0) {
-      const burstStartTime = burstQueue.current.shift();
+      const { vehicleId, burstStartTime } = burstQueue.current.shift();
       const source = isRTSPRef.current ? imageRef.current : videoRef.current;
 
       if (!source || !isReadyRef.current) {
-        onPlateResult({ plateText: null, confidence: 0, plateImageUrl: null, burstStartTime, detectionLog: [] });
+        onPlateResult({ vehicleId, plateText: null, confidence: 0, plateImageUrl: null, burstStartTime, detectionLog: [] });
         continue;
       }
 
@@ -83,7 +83,7 @@ const LowCameraFeed = forwardRef(function LowCameraFeed({ onPlateResult }, ref) 
         : (source.readyState >= 2 && source.videoWidth > 0);
 
       if (!ready) {
-        onPlateResult({ plateText: null, confidence: 0, plateImageUrl: null, burstStartTime, detectionLog: [] });
+        onPlateResult({ vehicleId, plateText: null, confidence: 0, plateImageUrl: null, burstStartTime, detectionLog: [] });
         continue;
       }
 
@@ -114,6 +114,7 @@ const LowCameraFeed = forwardRef(function LowCameraFeed({ onPlateResult }, ref) 
       setLastPlate(found ? best.plate_text.toUpperCase() : null);
 
       onPlateResult({
+        vehicleId,
         plateText:     found ? best.plate_text.toUpperCase() : null,
         confidence:    best?.ocr_confidence || 0,
         plateImageUrl: toAbsUrl(best?.plate_url) || null,
@@ -130,8 +131,8 @@ const LowCameraFeed = forwardRef(function LowCameraFeed({ onPlateResult }, ref) 
   }, [onPlateResult]);
 
   // Public method exposed to parent via ref
-  const runBurst = useCallback((burstStartTime) => {
-    burstQueue.current.push(burstStartTime);
+  const runBurst = useCallback((vehicleId, burstStartTime) => {
+    burstQueue.current.push({ vehicleId, burstStartTime });
     processQueue();
   }, [processQueue]);
 

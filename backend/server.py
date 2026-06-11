@@ -298,6 +298,23 @@ async def _poll_commands():
                                 db.commit()
                         finally:
                             db.close()
+                elif cmd_type == 'update_vehicle_plate':
+                    vehicle_id   = payload.get('vehicle_id')
+                    new_plate    = payload.get('license_plate')
+                    new_pstatus  = payload.get('plate_status')
+                    if vehicle_id and new_plate:
+                        ts = datetime.now(timezone.utc).isoformat()
+                        db = Session_()
+                        try:
+                            v = db.query(VehicleORM).filter(VehicleORM.id == vehicle_id).first()
+                            if v:
+                                v.license_plate = new_plate
+                                if new_pstatus:
+                                    v.plate_status = new_pstatus
+                                v.last_update = ts
+                                db.commit()
+                        finally:
+                            db.close()
                 elif cmd_type == 'delete_vehicle':
                     vehicle_id = payload.get('vehicle_id')
                     if vehicle_id:
@@ -374,6 +391,7 @@ async def _sync_loop():
             await _flush_sync_queue()
             await _flush_user_sync_queue()
             await _poll_commands()
+            await _check_heartbeats()
         except Exception as e:
             log.error("Sync loop crashed: %s", e)
 
@@ -982,6 +1000,38 @@ def record_auth_event(email: str, username: str, action: str, ip: str = None):
     except Exception as e:
         log.warning("Failed to record auth event: %s", e)
 
+# ── Heartbeat-based logout detection ────────────────────────────────────────────
+# Maps email → last heartbeat datetime. The desktop app can be killed (closed,
+# crashed, power loss) without any logout request ever reaching the backend, so
+# instead of relying on a request firing during shutdown, the frontend pings
+# /heartbeat periodically while logged in and _check_heartbeats() (run from
+# _sync_loop) records a 'logout' once a user's heartbeat goes stale.
+_last_heartbeat: dict = {}
+HEARTBEAT_TIMEOUT_SECONDS = 180  # ~3 min — well above normal heartbeat interval
+
+async def _check_heartbeats():
+    now = datetime.now(timezone.utc)
+    stale = [
+        email for email, ts in _last_heartbeat.items()
+        if (now - ts).total_seconds() > HEARTBEAT_TIMEOUT_SECONDS
+    ]
+    for email in stale:
+        _last_heartbeat.pop(email, None)
+        conn   = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT username FROM users WHERE email = ?", (email,))
+        row = cursor.fetchone()
+        conn.close()
+        username = row[0] if row else None
+        record_auth_event(email, username, 'logout', None)
+        enqueue_user_sync('auth_log', 0, {
+            'email':     email,
+            'username':  username,
+            'action':    'logout',
+            'timestamp': now.isoformat(),
+            'ip':        None,
+        })
+
 # ── Auth endpoints ─────────────────────────────────────────────────────────────
 
 @app.post("/register")
@@ -1117,6 +1167,7 @@ def auto_logout(request: Request, current_user: dict = Depends(get_current_user)
 
     def _confirm():
         _pending_auto_logouts.pop(email, None)
+        _last_heartbeat.pop(email, None)
         record_auth_event(email, username, 'logout', ip)
         enqueue_user_sync('auth_log', 0, {
             'email':     email,
@@ -1143,6 +1194,12 @@ def cancel_auto_logout(current_user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+@app.post("/heartbeat")
+def heartbeat(current_user: dict = Depends(get_current_user)):
+    _last_heartbeat[current_user["sub"]] = datetime.now(timezone.utc)
+    return {"ok": True}
+
+
 @app.post("/logout")
 def logout(request: Request, current_user: dict = Depends(get_current_user)):
     conn   = sqlite3.connect(DB_PATH)
@@ -1151,6 +1208,7 @@ def logout(request: Request, current_user: dict = Depends(get_current_user)):
     row = cursor.fetchone()
     conn.close()
     username = row[0] if row else None
+    _last_heartbeat.pop(current_user["sub"], None)
     record_auth_event(current_user["sub"], username, 'logout', request.client.host if request.client else None)
     enqueue_user_sync('auth_log', 0, {
         'email':     current_user['sub'],

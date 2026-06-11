@@ -11,8 +11,9 @@ export default function DualCameraDetector() {
   // Called by HighCameraDetector when a vehicle crosses the plate zone
   const handleTrigger = useCallback((triggerData) => {
     addTrigger(triggerData);
-    // Kick the low cam burst immediately, tagged with the trigger timestamp
-    lowCamRef.current?.runBurst(triggerData.triggeredAt);
+    // Kick the low cam burst immediately, tagged with the vehicle ID so the
+    // OCR result is matched back to this exact trigger (not the closest in time).
+    lowCamRef.current?.runBurst(triggerData.vehicleId, triggerData.triggeredAt);
   }, [addTrigger]);
 
   // Called by LowCameraFeed when a burst OCR result is ready

@@ -377,6 +377,23 @@ export function ShopProvider({ children }) {
     return () => window.removeEventListener('beforeunload', handleUnload);
   }, [user]);
 
+  // ── Heartbeat — lets the backend detect a desktop app close/crash that
+  // never sends a logout request, by noticing when heartbeats stop arriving.
+  useEffect(() => {
+    if (!user) return;
+    const sendHeartbeat = () => {
+      const token = getAccessToken();
+      if (!token) return;
+      fetch(`${API_URL}/heartbeat`, {
+        method:  'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    };
+    sendHeartbeat();
+    const id = setInterval(sendHeartbeat, 20_000);
+    return () => clearInterval(id);
+  }, [user]);
+
 
   // ── Vehicle CRUD — optimistic UI + background server sync ────────────────────
   const addVehicle = (vehicleData) => {

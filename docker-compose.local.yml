@@ -1,0 +1,33 @@
+version: '3.9'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/backend/data       # SQLite database
+      - ./backend/uploads:/app/backend/uploads # local uploaded images
+      - ./licence_plate.pt:/app/licence_plate.pt:ro # YOLO license plate model
+      - ./yolov8n.pt:/app/backend/yolov8n.pt:ro # YOLOv8 nano model
+      - paddleocr_cache:/root/.paddleocr       # OCR models cache
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - ALLOWED_ORIGINS=http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  paddleocr_cache:
