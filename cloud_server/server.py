@@ -698,19 +698,28 @@ async def export_all_vehicles(
     lines = ['Branch,Vehicle ID,License Plate,Status,Entry Time,Last Update,Direction,Activity Flow']
     for r in rows:
         branch_name, vid, plate, status, ts, lu, direction, history_json = r
+        ts_dt = None
         if ts:
             ts_dt = datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone(IST)
             if start_dt and ts_dt < start_dt:
                 continue
             if end_dt and ts_dt >= end_dt:
                 continue
+        ts_str = ts_dt.strftime('%d/%m/%Y %I:%M %p') if ts_dt else ''
+        lu_str = ''
+        if lu:
+            lu_str = datetime.fromisoformat(lu.replace('Z', '+00:00')).astimezone(IST).strftime('%d/%m/%Y %I:%M %p')
         try:
             history = json.loads(history_json) if history_json else []
-            flow    = ' >> '.join(f"{h['status']} ({h.get('timestamp','')[:16]})" for h in history)
+            flow    = ' >> '.join(
+                f"{h.get('status','')} ({datetime.fromisoformat(h['timestamp'].replace('Z','+00:00')).astimezone(IST).strftime('%d %b %H:%M')})"
+                if h.get('timestamp') else f"{h.get('status','')}"
+                for h in history
+            )
         except Exception:
             flow = ''
         direction_label = {'INGRESS': 'In', 'EGRESS': 'Out'}.get(direction, '')
-        lines.append(f'"{branch_name}","{vid}","{plate or "PENDING"}","{status or ""}","{ts or ""}","{lu or ""}","{direction_label}","{flow}"')
+        lines.append(f'"{branch_name}","{vid}","{plate or "PENDING"}","{status or ""}","{ts_str}","{lu_str}","{direction_label}","{flow}"')
     csv_content = '\n'.join(lines)
 
     name_parts = [branch_name_filter or 'consolidated']
