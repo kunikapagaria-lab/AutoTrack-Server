@@ -297,7 +297,13 @@ export function ShopProvider({ children }) {
   // Cache vehicles in localStorage so the list appears instantly on refresh
   // with no empty-state flash. Backend fetch overwrites with authoritative data.
   useEffect(() => {
-    if (user) localStorage.setItem('autotrack_vehicles', JSON.stringify(vehicles));
+    if (!user) return;
+    try {
+      localStorage.setItem('autotrack_vehicles', JSON.stringify(vehicles));
+    } catch {
+      // Storage quota exceeded (large vehicle history) — safe to skip caching;
+      // the backend fetch remains the authoritative data source.
+    }
   }, [vehicles, user]);
 
   // Re-sync from backend whenever the browser tab becomes visible again

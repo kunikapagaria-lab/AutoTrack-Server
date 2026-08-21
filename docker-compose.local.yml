@@ -13,7 +13,7 @@ services:
       - ./backend/uploads:/app/backend/uploads # local uploaded images
       - ./licence_plate.pt:/app/licence_plate.pt:ro # YOLO license plate model
       - ./yolov8n.pt:/app/backend/yolov8n.pt:ro # YOLOv8 nano model
-      - paddleocr_cache:/root/.paddleocr       # OCR models cache
+      - paddleocr_cache:/root/.paddlex         # OCR models cache
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
